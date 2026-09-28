@@ -1,0 +1,636 @@
+/* Appearance: colour theme, button style and motion level.
+ *
+ * All three live as attributes on <html> (data-theme, data-button-style,
+ * data-motion) that the stylesheets key off. overrides/main.html sets them
+ * before first paint from localStorage; this file adds the controls that
+ * change them — the palette popover in the header and the panels on the
+ * Appearance page — plus the motion effects (theme reveal, ripple, scroll
+ * reveal, card spotlight, reading progress).
+ *
+ * Keep the id lists below in sync with the pre-paint script in main.html. */
+(function () {
+  "use strict";
+
+  var THEMES = [
+    { id: "meadow", label: "Meadow", description: "Green on white. The default.", swatch: "#ffffff", accent: "#86bc25" },
+    { id: "meadow-dark", label: "Meadow Dark", description: "Signature green on true black.", swatch: "#000000", accent: "#86bc25" },
+    { id: "dark", label: "Dark", description: "Near-black with electric blue.", swatch: "#0a0a0c", accent: "#0070f3" },
+    { id: "midnight", label: "Midnight", description: "Blue-tinted dark, indigo accent.", swatch: "#0a0e1c", accent: "#6366f1" },
+    { id: "light", label: "Light", description: "Clean neutral with electric blue.", swatch: "#ffffff", accent: "#0070f3" },
+    { id: "sand", label: "Sand", description: "Warm paper with terracotta.", swatch: "#eeece7", accent: "#c2410c" },
+  ];
+
+  var BUTTON_STYLES = [
+    { id: "rounded", label: "Rounded", description: "Soft corners and a gentle lift on hover." },
+    { id: "pill", label: "Pill", description: "Fully rounded ends, a little more breathing room." },
+    { id: "sharp", label: "Sharp", description: "Crisp corners with small-caps labels." },
+    { id: "tactile", label: "Tactile", description: "Raised with a visible edge that sinks when pressed." },
+  ];
+
+  var MOTION_LEVELS = [
+    { id: "full", label: "Full", description: "Page transitions, ripples, reveal on scroll and a circular theme wipe." },
+    { id: "subtle", label: "Subtle", description: "Fades only. Nothing slides, lifts or loops." },
+    { id: "off", label: "Off", description: "No animation at all." },
+  ];
+
+  var SETTINGS = {
+    theme: { attr: "data-theme", key: "docs.theme", options: THEMES, noun: "Theme" },
+    buttonStyle: { attr: "data-button-style", key: "docs.buttonStyle", options: BUTTON_STYLES, noun: "Button style" },
+    motion: { attr: "data-motion", key: "docs.motion", options: MOTION_LEVELS, noun: "Motion" },
+  };
+
+  var ICON_PALETTE =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22A10 10 0 0 1 2 12 10 10 0 0 1 12 2c5.5 0 10 4 10 9a6 6 0 0 1-6 6h-1.8c-.3 0-.5.2-.5.5 0 .1.1.2.1.3.4.5.6 1.1.6 1.7.1 1.4-1 2.5-2.4 2.5m0-18a8 8 0 0 0-8 8 8 8 0 0 0 8 8c.3 0 .5-.2.5-.5 0-.2-.1-.3-.1-.4-.4-.5-.6-1-.6-1.6 0-1.4 1.1-2.5 2.5-2.5H16a4 4 0 0 0 4-4c0-3.9-3.6-7-8-7m-5.5 6c.8 0 1.5.7 1.5 1.5S7.3 13 6.5 13 5 12.3 5 11.5 5.7 10 6.5 10m3-4c.8 0 1.5.7 1.5 1.5S10.3 9 9.5 9 8 8.3 8 7.5 8.7 6 9.5 6m5 0c.8 0 1.5.7 1.5 1.5S15.3 9 14.5 9 13 8.3 13 7.5 13.7 6 14.5 6m3 4c.8 0 1.5.7 1.5 1.5s-.7 1.5-1.5 1.5-1.5-.7-1.5-1.5.7-1.5 1.5-1.5"/></svg>';
+  var ICON_CHECK =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 7 9 19l-5.5-5.5 1.41-1.41L9 16.17 19.59 5.59z"/></svg>';
+
+  var root = document.documentElement;
+  var systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+  var systemCalm = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  // Resolved once against the first page's URL, like Material does, so it
+  // stays correct after instant navigation changes location.
+  var appearanceUrl = (function () {
+    var config = document.getElementById("__config");
+    var base = ".";
+    try {
+      base = JSON.parse(config.textContent).base || ".";
+    } catch (e) {}
+    return new URL(base.replace(/\/?$/, "/") + "themes/", location.href).href;
+  })();
+
+  /* ── Storage ── */
+
+  function read(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function write(key, value) {
+    try {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch (e) {
+      // Private mode / blocked storage: the choice just won't persist.
+    }
+  }
+
+  /* ── State ── */
+
+  function find(options, id) {
+    for (var i = 0; i < options.length; i++) if (options[i].id === id) return options[i];
+    return null;
+  }
+
+  function fallback(name) {
+    if (name === "theme") return systemDark.matches ? "meadow-dark" : "meadow";
+    if (name === "motion") return systemCalm.matches ? "off" : "full";
+    return "rounded";
+  }
+
+  function current(name) {
+    return root.getAttribute(SETTINGS[name].attr);
+  }
+
+  function motion() {
+    return current("motion") || "full";
+  }
+
+  /** Apply a setting. `origin` (an element) is where the theme wipe starts;
+   *  `persist` false is used when following a system change. */
+  function choose(name, id, origin, persist) {
+    var setting = SETTINGS[name];
+    var option = find(setting.options, id);
+    if (!option) return;
+    if (persist !== false) write(setting.key, id);
+    if (current(name) === id) return;
+
+    var apply = function () {
+      root.setAttribute(setting.attr, id);
+      if (name === "theme") syncFavicon(id);
+      syncControls();
+    };
+    if (name === "theme") withThemeTransition(apply, origin);
+    else apply();
+    announce(setting.noun + ": " + option.label);
+  }
+
+  // Green favicon for the Meadow themes, its blue twin for the rest — the
+  // same split components.css makes for the logo.
+  function syncFavicon(theme) {
+    var icon = document.querySelector('link[rel="icon"]');
+    if (!icon) return;
+    var green = theme.indexOf("meadow") === 0;
+    var href = icon.getAttribute("href");
+    icon.setAttribute("href", green ? href.replace("-blue.", "-green.") : href.replace("-green.", "-blue."));
+  }
+
+  function resetAll(origin) {
+    Object.keys(SETTINGS).forEach(function (name) {
+      write(SETTINGS[name].key, null);
+      choose(name, fallback(name), origin, false);
+    });
+  }
+
+  // With no stored choice, follow the OS as it changes (e.g. sunset dark mode).
+  function followSystem(name) {
+    return function () {
+      if (!read(SETTINGS[name].key)) choose(name, fallback(name), null, false);
+    };
+  }
+  onMediaChange(systemDark, followSystem("theme"));
+  onMediaChange(systemCalm, followSystem("motion"));
+
+  function onMediaChange(query, handler) {
+    if (query.addEventListener) query.addEventListener("change", handler);
+    else if (query.addListener) query.addListener(handler);
+  }
+
+  /* ── Theme transition ──
+     Full motion: a circle grows out of the clicked control (View Transitions).
+     Subtle: the browser's default cross-fade. Off / unsupported: instant. */
+  function withThemeTransition(apply, origin) {
+    var level = motion();
+    if (!document.startViewTransition || level === "off" || document.visibilityState !== "visible") {
+      apply();
+      return;
+    }
+    // A skipped transition rejects `ready`; the DOM update still runs, so
+    // there is nothing to recover — just keep it from surfacing as an error.
+    if (level !== "full" || !origin) {
+      document.startViewTransition(apply).ready.catch(function () {});
+      return;
+    }
+
+    var rect = origin.getBoundingClientRect();
+    var x = rect.left + rect.width / 2;
+    var y = rect.top + rect.height / 2;
+    var radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+
+    root.classList.add("theme-reveal");
+    var transition = document.startViewTransition(apply);
+    transition.ready
+      .then(function () {
+        root.animate(
+          { clipPath: ["circle(0px at " + x + "px " + y + "px)", "circle(" + radius + "px at " + x + "px " + y + "px)"] },
+          { duration: 650, easing: "cubic-bezier(0.23, 1, 0.32, 1)", pseudoElement: "::view-transition-new(root)" }
+        );
+      })
+      .catch(function () {});
+    transition.finished.finally(function () {
+      root.classList.remove("theme-reveal");
+    });
+  }
+
+  /* ── Helpers ── */
+
+  function el(tag, className, attrs) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (attrs) for (var k in attrs) node.setAttribute(k, attrs[k]);
+    return node;
+  }
+
+  var liveRegion;
+  function announce(text) {
+    if (!liveRegion) {
+      liveRegion = el("div", "sr-only", { "aria-live": "polite", role: "status" });
+      document.body.appendChild(liveRegion);
+    }
+    liveRegion.textContent = text;
+  }
+
+  /** Reflect the current attributes in every rendered control. */
+  function syncControls() {
+    var theme = current("theme");
+    document.querySelectorAll(".swatch[data-option]").forEach(function (swatch) {
+      var on = swatch.getAttribute("data-option") === theme;
+      swatch.setAttribute("aria-checked", on ? "true" : "false");
+      swatch.tabIndex = on ? 0 : -1;
+    });
+    document.querySelectorAll(".appearance input[type=radio]").forEach(function (input) {
+      input.checked = current(input.name) === input.value;
+    });
+  }
+
+  /* ── Header switcher: swatches only, detail lives on the Appearance page ── */
+
+  function mountHeaderSwitch() {
+    var inner = document.querySelector(".md-header__inner");
+    if (!inner || inner.querySelector(".appearance-switch")) return;
+
+    var wrap = el("div", "appearance-switch");
+    var toggle = el("button", "md-header__button md-icon appearance-toggle", {
+      type: "button",
+      title: "Theme",
+      "aria-label": "Change colour theme",
+      "aria-haspopup": "true",
+      "aria-expanded": "false",
+      "aria-controls": "appearance-popover",
+    });
+    toggle.innerHTML = ICON_PALETTE;
+
+    var popover = el("div", "appearance-popover", { id: "appearance-popover", hidden: "" });
+    var label = el("span", "appearance-popover__label", { id: "appearance-popover-label" });
+    label.textContent = "Theme";
+    var group = el("div", "swatch-row", { role: "radiogroup", "aria-labelledby": "appearance-popover-label" });
+
+    THEMES.forEach(function (theme) {
+      var swatch = el("button", "swatch", {
+        type: "button",
+        role: "radio",
+        title: theme.label,
+        "aria-label": theme.label,
+        "data-option": theme.id,
+      });
+      swatch.style.setProperty("--swatch-bg", theme.swatch);
+      swatch.style.setProperty("--swatch-accent", theme.accent);
+      swatch.addEventListener("click", function () {
+        choose("theme", theme.id, swatch);
+      });
+      group.appendChild(swatch);
+    });
+
+    // Radio-group keys: arrows move and select, Home/End jump.
+    group.addEventListener("keydown", function (event) {
+      var swatches = Array.prototype.slice.call(group.querySelectorAll(".swatch"));
+      var index = swatches.indexOf(document.activeElement);
+      if (index < 0) return;
+      var next = null;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (index + 1) % swatches.length;
+      else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (index - 1 + swatches.length) % swatches.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = swatches.length - 1;
+      if (next === null) return;
+      event.preventDefault();
+      swatches[next].focus();
+      swatches[next].click();
+    });
+
+    var link = el("a", "appearance-popover__link", { href: appearanceUrl });
+    link.innerHTML = "<span>Buttons, motion &amp; more</span><span aria-hidden=\"true\">&rarr;</span>";
+
+    popover.appendChild(label);
+    popover.appendChild(group);
+    popover.appendChild(link);
+    wrap.appendChild(toggle);
+    wrap.appendChild(popover);
+
+    var anchor = inner.querySelector('label[for="__search"]') || inner.querySelector(".md-header__source");
+    inner.insertBefore(wrap, anchor);
+
+    function setOpen(open) {
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        popover.removeAttribute("hidden");
+        var checked = popover.querySelector('.swatch[aria-checked="true"]');
+        if (checked) checked.focus();
+      } else {
+        popover.setAttribute("hidden", "");
+      }
+    }
+
+    toggle.addEventListener("click", function () {
+      setOpen(popover.hasAttribute("hidden"));
+    });
+    link.addEventListener("click", function () {
+      setOpen(false);
+    });
+    wrap.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !popover.hasAttribute("hidden")) {
+        setOpen(false);
+        toggle.focus();
+      }
+    });
+    document.addEventListener("pointerdown", function (event) {
+      if (!wrap.contains(event.target)) setOpen(false);
+    });
+
+    syncControls();
+  }
+
+  /* ── Appearance page panels ── */
+
+  function optionCard(name, option, preview) {
+    var card = el("label", "option-card");
+    var input = el("input", null, { type: "radio", name: name, value: option.id });
+    input.checked = current(name) === option.id;
+    input.addEventListener("change", function () {
+      if (input.checked) choose(name, option.id, card);
+    });
+
+    var check = el("span", "option-card__check", { "aria-hidden": "true" });
+    check.innerHTML = ICON_CHECK;
+
+    var text = el("span", "option-card__text");
+    var title = el("span", "option-card__title");
+    title.textContent = option.label;
+    var desc = el("span", "option-card__desc");
+    desc.textContent = option.description;
+    text.appendChild(title);
+    text.appendChild(desc);
+
+    card.appendChild(input);
+    card.appendChild(check);
+    card.appendChild(preview);
+    card.appendChild(text);
+    return card;
+  }
+
+  function themePreview(theme) {
+    var preview = el("span", "theme-preview", { "data-theme": theme.id, "aria-hidden": "true" });
+    preview.innerHTML =
+      '<span class="theme-preview__bar"><i></i><i></i><i></i></span>' +
+      '<span class="theme-preview__body">' +
+      '<span class="theme-preview__side"><span class="tp-line tp-line--accent"></span><span class="tp-line"></span><span class="tp-line"></span><span class="tp-line"></span></span>' +
+      '<span class="theme-preview__main"><span class="tp-line tp-line--head"></span><span class="tp-line"></span><span class="tp-line" style="width:80%"></span><span class="tp-btn"></span></span>' +
+      "</span>";
+    return preview;
+  }
+
+  function buttonPreview(style) {
+    var preview = el("span", "button-preview", { "data-button-style": style.id, "aria-hidden": "true" });
+    preview.innerHTML =
+      '<span class="md-button md-button--primary md-button--sm">Primary</span>' +
+      '<span class="md-button md-button--sm">Secondary</span>';
+    return preview;
+  }
+
+  function motionPreview(level) {
+    var preview = el("span", "motion-preview", { "data-demo": level.id, "aria-hidden": "true" });
+    preview.appendChild(el("span"));
+    return preview;
+  }
+
+  function fieldset(legendText, gridClass, cards) {
+    var set = el("fieldset");
+    var legend = el("legend");
+    legend.textContent = legendText;
+    var grid = el("div", gridClass);
+    cards.forEach(function (card) {
+      grid.appendChild(card);
+    });
+    set.appendChild(legend);
+    set.appendChild(grid);
+    return set;
+  }
+
+  function mountAppearancePanel() {
+    var host = document.querySelector("[data-appearance-panel]");
+    if (!host || host.hasAttribute("data-mounted")) return;
+    host.setAttribute("data-mounted", "");
+    host.classList.add("appearance");
+    host.innerHTML = "";
+
+    host.appendChild(
+      fieldset("Colour", "option-grid", THEMES.map(function (t) {
+        return optionCard("theme", t, themePreview(t));
+      }))
+    );
+    host.appendChild(
+      fieldset("Buttons", "option-grid", BUTTON_STYLES.map(function (s) {
+        return optionCard("buttonStyle", s, buttonPreview(s));
+      }))
+    );
+    host.appendChild(
+      fieldset("Motion", "option-grid option-grid--wide", MOTION_LEVELS.map(function (m) {
+        return optionCard("motion", m, motionPreview(m));
+      }))
+    );
+
+    var footer = el("div", "appearance__footer");
+    var note = el("span");
+    note.textContent = "Saved in this browser. Until you choose, theme and motion follow your system settings.";
+    var reset = el("button", "md-button md-button--ghost md-button--sm", { type: "button" });
+    reset.textContent = "Reset to defaults";
+    reset.addEventListener("click", function () {
+      resetAll(reset);
+    });
+    footer.appendChild(note);
+    footer.appendChild(reset);
+    host.appendChild(footer);
+
+    // The name attributes double as setting names ("theme", "buttonStyle",
+    // "motion"), which is what syncControls matches on.
+    syncControls();
+  }
+
+  /* ── Reading progress ── */
+
+  var progressQueued = false;
+  function updateProgress() {
+    progressQueued = false;
+    updateTimelines();
+    var bar = document.querySelector(".scroll-progress");
+    if (!bar) return;
+    var max = document.documentElement.scrollHeight - innerHeight;
+    var value = max > 0 ? Math.min(1, Math.max(0, scrollY / max)) : 0;
+    bar.style.transform = "scaleX(" + value + ")";
+  }
+
+  /* ── Timeline spine ──
+     The spine runs from the first tag's centre to the last's; its fill tracks
+     a line 60% down the viewport, and each tag the fill has passed gets
+     .is-reached (its node fills in). */
+  function updateTimelines() {
+    var line = innerHeight * 0.6;
+    document.querySelectorAll(".md-typeset .timeline > dl").forEach(function (list) {
+      var tags = list.querySelectorAll(":scope > dt");
+      if (!tags.length) return;
+      var box = list.getBoundingClientRect();
+      var centre = function (tag) {
+        var r = tag.getBoundingClientRect();
+        return r.top + r.height / 2 - box.top;
+      };
+      var start = centre(tags[0]);
+      var length = Math.max(0, centre(tags[tags.length - 1]) - start);
+      var reached = line - box.top;
+      var progress = length > 0 ? Math.min(1, Math.max(0, (reached - start) / length)) : reached >= start ? 1 : 0;
+      list.style.setProperty("--tl-start", start + "px");
+      list.style.setProperty("--tl-length", length + "px");
+      list.style.setProperty("--tl-progress", String(progress));
+      tags.forEach(function (tag) {
+        tag.classList.toggle("is-reached", centre(tag) <= reached);
+      });
+    });
+  }
+
+  function mountScrollProgress() {
+    var header = document.querySelector(".md-header");
+    if (header && !header.querySelector(".scroll-progress")) {
+      header.appendChild(el("div", "scroll-progress", { "aria-hidden": "true" }));
+    }
+    updateProgress();
+  }
+
+  window.addEventListener(
+    "scroll",
+    function () {
+      if (!progressQueued) {
+        progressQueued = true;
+        requestAnimationFrame(updateProgress);
+      }
+    },
+    { passive: true }
+  );
+  window.addEventListener("resize", updateProgress, { passive: true });
+  // Web fonts shift line heights after first layout; re-measure the spines.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(updateProgress);
+
+  /* ── Scroll reveal ── */
+
+  var REVEAL_SELECTOR = [
+    ".md-typeset .grid.cards > ul > li",
+    ".md-typeset .grid.cards > ol > li",
+    ".md-typeset .grid > .card",
+    ".md-typeset .admonition",
+    ".md-typeset details",
+    ".md-typeset .timeline > dl > dt",
+    ".md-typeset .timeline > dl > dd",
+    ".md-typeset .reveal",
+  ].join(",");
+
+  var revealObserver =
+    "IntersectionObserver" in window
+      ? new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              if (!entry.isIntersecting) return;
+              var node = entry.target;
+              revealObserver.unobserve(node);
+              node.classList.add("is-revealed");
+              // Drop the reveal state once it has played, so the element's own
+              // hover transitions aren't slowed by the stagger delay.
+              setTimeout(function () {
+                node.removeAttribute("data-reveal");
+                node.classList.remove("is-revealed");
+                node.style.removeProperty("--reveal-i");
+              }, 1200);
+            });
+          },
+          { rootMargin: "0px 0px -6% 0px" }
+        )
+      : null;
+
+  function mountReveal() {
+    if (!revealObserver || motion() === "off") return;
+    var counts = new Map();
+    document.querySelectorAll(REVEAL_SELECTOR).forEach(function (node) {
+      if (node.closest(".appearance") || node.parentElement.closest("[data-reveal]")) return;
+      var parent = node.parentElement;
+      var index = counts.get(parent) || 0;
+      counts.set(parent, index + 1);
+      // Timeline entries arrive one at a time as you scroll, so a running
+      // stagger would only add lag; the entry just trails its tag slightly.
+      if (parent.parentElement && parent.parentElement.classList.contains("timeline")) {
+        index = node.tagName === "DT" ? 0 : 1;
+      }
+      node.setAttribute("data-reveal", "");
+      node.style.setProperty("--reveal-i", String(Math.min(index, 8)));
+      revealObserver.observe(node);
+    });
+  }
+
+  /* ── Pointer effects (delegated once) ── */
+
+  // Card spotlight follows the pointer.
+  document.addEventListener(
+    "pointermove",
+    function (event) {
+      var card = event.target.closest && event.target.closest(".md-typeset .grid.cards > ul > li, .md-typeset .grid.cards > ol > li, .md-typeset .grid > .card");
+      if (!card) return;
+      var rect = card.getBoundingClientRect();
+      card.style.setProperty("--mx", event.clientX - rect.left + "px");
+      card.style.setProperty("--my", event.clientY - rect.top + "px");
+    },
+    { passive: true }
+  );
+
+  // Ripple from the press point on buttons.
+  document.addEventListener("pointerdown", function (event) {
+    if (motion() !== "full" || event.button !== 0) return;
+    var button = event.target.closest && event.target.closest(".md-typeset .md-button");
+    if (!button) return;
+    var rect = button.getBoundingClientRect();
+    var size = Math.max(rect.width, rect.height) * 2.2;
+    var ripple = el("span", "ripple", { "aria-hidden": "true" });
+    ripple.style.width = ripple.style.height = size + "px";
+    ripple.style.left = event.clientX - rect.left - size / 2 + "px";
+    ripple.style.top = event.clientY - rect.top - size / 2 + "px";
+    button.appendChild(ripple);
+    ripple.addEventListener("animationend", function () {
+      ripple.remove();
+    });
+  });
+
+  /* ── Segmented controls: .button-group--toggle ── */
+
+  function mountToggleGroups() {
+    document.querySelectorAll(".md-typeset .button-group--toggle").forEach(function (group) {
+      if (group.hasAttribute("data-mounted")) return;
+      group.setAttribute("data-mounted", "");
+      group.setAttribute("role", "group");
+      var buttons = group.querySelectorAll(".md-button");
+      var anyPressed = group.querySelector('.md-button[aria-pressed="true"]');
+      buttons.forEach(function (button, i) {
+        // Links answer Enter but not Space; role=button promises both.
+        button.setAttribute("role", "button");
+        if (!button.hasAttribute("aria-pressed")) {
+          button.setAttribute("aria-pressed", !anyPressed && i === 0 ? "true" : "false");
+        }
+      });
+    });
+  }
+
+  function pressSegment(button) {
+    var group = button.closest(".button-group--toggle");
+    group.querySelectorAll(".md-button").forEach(function (other) {
+      other.setAttribute("aria-pressed", other === button ? "true" : "false");
+    });
+  }
+
+  // Capture phase + stopPropagation: Material's instant navigation listens
+  // for link clicks on document.body and doesn't check defaultPrevented, so
+  // the click must never get there or "#" reloads the page in place.
+  document.addEventListener(
+    "click",
+    function (event) {
+      var button = event.target.closest && event.target.closest(".md-typeset .button-group--toggle .md-button");
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pressSegment(button);
+    },
+    true
+  );
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== " ") return;
+    var button = event.target.closest && event.target.closest(".md-typeset .button-group--toggle .md-button");
+    if (!button) return;
+    event.preventDefault();
+    pressSegment(button);
+  });
+
+  /* ── Mount on every page (Material's instant navigation re-emits document$) ── */
+
+  function mountAll() {
+    mountHeaderSwitch();
+    mountScrollProgress();
+    mountAppearancePanel();
+    mountToggleGroups();
+    mountReveal();
+    syncControls();
+  }
+
+  if (window.document$ && typeof window.document$.subscribe === "function") {
+    window.document$.subscribe(mountAll);
+  } else if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountAll);
+  } else {
+    mountAll();
+  }
+})();

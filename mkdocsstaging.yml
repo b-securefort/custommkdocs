@@ -1,0 +1,10 @@
+# Staging build: everything comes from mkdocs.yml except what's set here.
+#   mkdocs build -f mkdocsstaging.yml
+#   mkdocs serve -f mkdocsstaging.yml
+INHERIT: mkdocs.yml
+
+site_name: My Docs (staging)
+site_dir: site-staging
+
+extra:
+  environment: staging

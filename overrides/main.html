@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {%- if page and page.meta and page.meta.unlisted %}
+  <meta name="robots" content="noindex">
+  {%- endif %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:wght@400..700&display=swap">
+  <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+  {#- Paint the saved appearance before the first frame, so a reload never
+      flashes the default theme. Keep these id lists in sync with THEMES /
+      BUTTON_STYLES / MOTION_LEVELS in javascripts/appearance.js. -#}
+  <script>
+    (function () {
+      var root = document.documentElement;
+      function read(key) {
+        try { return localStorage.getItem(key); } catch (e) { return null; }
+      }
+      function pick(value, allowed, fallback) {
+        return allowed.indexOf(value) >= 0 ? value : fallback;
+      }
+      var prefersDark = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
+      var prefersCalm = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      var theme = pick(read("docs.theme"),
+        ["meadow", "meadow-dark", "dark", "midnight", "light", "sand"],
+        prefersDark ? "meadow-dark" : "meadow");
+      root.setAttribute("data-theme", theme);
+      // The favicon ships green; the non-Meadow themes use its blue twin.
+      var icon = document.querySelector('link[rel="icon"]');
+      if (icon && theme.indexOf("meadow") !== 0) {
+        icon.setAttribute("href", icon.getAttribute("href").replace("-green.", "-blue."));
+      }
+      root.setAttribute("data-button-style", pick(read("docs.buttonStyle"),
+        ["rounded", "pill", "sharp", "tactile"], "rounded"));
+      root.setAttribute("data-motion", pick(read("docs.motion"),
+        ["full", "subtle", "off"], prefersCalm ? "off" : "full"));
+    })();
+  </script>
+{% endblock %}
+
+{% block announce %}
+  <span class="announce">
+    <span class="badge badge--live">New</span>
+    Six colour themes, four button styles and a motion setting —
+    <a href="{{ 'themes/' | url }}">open Appearance</a>
+    or use the palette in the header.
+  </span>
+{% endblock %}

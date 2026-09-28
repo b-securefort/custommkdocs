@@ -1,0 +1,151 @@
+{#- Home page layout, in the spirit of squidfunk.github.io/mkdocs-material.
+    A page opts in with `template: home.html`; everything shown comes from its
+    front matter (see docs/index.md), so editors never touch this file:
+
+      hero        logo, title, highlight, eyebrow, text, buttons, image, image_alt
+      features    title, text, items: icon, title, text, link
+      highlights  title, text, items: title, text, icon or image, link, link_text
+      cta         title, text, buttons
+
+    Buttons are {text, link, style, icon}; style is any md-button variant
+    (primary, soft, outline, ghost, gradient…). Links and images are resolved
+    by hooks/front_matter.py. Every section is optional, and any Markdown in
+    the page body appears between the highlights and the call to action.
+    Sections live in the tabs block so they can span the full window width. -#}
+{% extends "main.html" %}
+
+{% macro home_icon(name) -%}
+  {% if name %}<span class="twemoji">{% include ".icons/" ~ name ~ ".svg" %}</span>{% endif %}
+{%- endmacro %}
+
+{% macro home_buttons(items) -%}
+  {% if items %}
+    <div class="button-row">
+      {% for b in items %}
+        <a href="{{ b.link | url }}" class="md-button md-button--lg{% if b.style %} md-button--{{ b.style }}{% endif %}">
+          {{- home_icon(b.icon) }}{{ b.text | e -}}
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+{%- endmacro %}
+
+{% macro home_section_head(section) -%}
+  {% if section.title %}<h2>{{ section.title | e }}</h2>{% endif %}
+  {% if section.text %}<p class="home-section__lead">{{ section.text | e }}</p>{% endif %}
+{%- endmacro %}
+
+{% block tabs %}
+  {{ super() }}
+  {% set meta = page.meta %}
+
+  {% set hero = meta.hero or {} %}
+  <section class="home-hero md-typeset">
+    <div class="hero__glow" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="md-grid home-hero__inner">
+      <div class="home-hero__text">
+        {% if hero.eyebrow %}
+          <p class="home-hero__eyebrow"><span class="badge badge--accent badge--live">{{ hero.eyebrow | e }}</span></p>
+        {% endif %}
+        {% set title = (hero.title or config.site_name) | e %}
+        {% if hero.highlight %}
+          {% set title = title | replace(hero.highlight | e, '<span class="text-gradient">' ~ (hero.highlight | e) ~ '</span>') %}
+        {% endif %}
+        <h1>{{ title }}</h1>
+        {% if hero.text %}<p class="home-hero__lead">{{ hero.text | e }}</p>{% endif %}
+        {{ home_buttons(hero.buttons) }}
+      </div>
+      <div class="home-hero__art"{% if not hero.image_alt %} aria-hidden="true"{% endif %}>
+        {% if hero.image %}
+          <img src="{{ hero.image | url }}" alt="{{ hero.image_alt | e }}">
+        {% elif hero.logo %}
+          {#- Emblem stage: the logo floating on a halo, clouds drifting past
+              it (three behind, one in front). -#}
+          <div class="home-hero__logo">
+            <div class="logo-sky">
+              <span class="sky-cloud sky-cloud--1"></span>
+              <span class="sky-cloud sky-cloud--2"></span>
+              <span class="sky-cloud sky-cloud--3"></span>
+            </div>
+            {% include "partials/logo.html" %}
+            <div class="logo-sky logo-sky--front">
+              <span class="sky-cloud sky-cloud--4"></span>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+    <svg class="home-hero__hills" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">
+      <path class="home-hero__hill home-hero__hill--back" d="M0 62C160 20 330 18 520 48s380 58 560 26 270-58 360-44v90H0Z"/>
+      <path class="home-hero__hill home-hero__hill--mid" d="M0 84c190-42 360-40 560-10s390 42 580 8c120-22 220-28 300-18v56H0Z"/>
+      <path class="home-hero__hill home-hero__hill--front" d="M0 104c240-26 470-26 720-6s480 22 720-4v26H0Z"/>
+    </svg>
+  </section>
+
+  {% if meta.features %}
+    <section class="home-section md-typeset">
+      <div class="md-grid home-section__inner">
+        {{ home_section_head(meta.features) }}
+        <div class="grid cards home-features">
+          <ul>
+            {% for item in meta.features["items"] %}
+              <li>
+                {% if item.icon %}<p class="home-features__icon">{{ home_icon(item.icon) }}</p>{% endif %}
+                <p class="home-features__title">
+                  {% if item.link %}<a href="{{ item.link | url }}">{{ item.title | e }}</a>{% else %}{{ item.title | e }}{% endif %}
+                </p>
+                {% if item.text %}<p>{{ item.text | e }}</p>{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+
+  {% if meta.highlights %}
+    <section class="home-section home-section--alt md-typeset">
+      <div class="md-grid home-section__inner">
+        {{ home_section_head(meta.highlights) }}
+        {% for item in meta.highlights["items"] %}
+          <div class="home-highlight reveal">
+            <div class="home-highlight__text">
+              <h3>{{ item.title | e }}</h3>
+              {% if item.text %}<p>{{ item.text | e }}</p>{% endif %}
+              {% if item.link %}
+                <p><a class="home-highlight__link" href="{{ item.link | url }}">{{ (item.link_text or "Learn more") | e }} <span aria-hidden="true">→</span></a></p>
+              {% endif %}
+            </div>
+            <div class="home-highlight__media">
+              {% if item.image %}
+                <img src="{{ item.image | url }}" alt="{{ (item.image_alt or item.title) | e }}" loading="lazy">
+              {% else %}
+                <div class="home-highlight__tile" aria-hidden="true">{{ home_icon(item.icon) }}</div>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  {% if page.content | trim %}
+    <section class="home-section md-typeset">
+      <div class="md-grid home-section__inner home-section__inner--prose">
+        {{ page.content }}
+      </div>
+    </section>
+  {% endif %}
+
+  {% if meta.cta %}
+    <section class="home-cta md-typeset">
+      <div class="md-grid home-section__inner">
+        {{ home_section_head(meta.cta) }}
+        {{ home_buttons(meta.cta.buttons) }}
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}
+
+{#- Everything is above; the regular content column stays empty. -#}
+{% block container %}{% endblock %}

@@ -1,0 +1,6 @@
+title: Getting started
+nav:
+  - index.md
+  - how-it-works.md
+  - custom-themes.md
+append_unmatched: true

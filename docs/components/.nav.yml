@@ -1,0 +1,17 @@
+title: Components
+nav:
+  - index.md
+  # A title with a list makes a group in the sidebar, without a subfolder.
+  - Site components:
+      - buttons.md
+      - badges.md
+      - cards.md
+      - timeline.md
+  - Markdown:
+      - admonitions.md
+      - code-blocks.md
+      - content-tabs.md
+      - tables.md
+      - diagrams.md
+      - formatting.md
+append_unmatched: true

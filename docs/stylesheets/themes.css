@@ -1,0 +1,336 @@
+/* ── Colour themes ──
+   Palettes ported from Nexus (frontend/src/index.css) so both products read as
+   one family. The active theme is the data-theme attribute on <html>, set
+   before first paint by overrides/main.html and changed by appearance.js.
+
+   Selectors are plain [data-theme="…"] rather than :root[data-theme="…"] so
+   ANY element can carry a theme: the Appearance page renders each preview card
+   in its own palette that way. All blocks share one specificity, so source
+   order decides — shared defaults first, then Meadow (also the bare :root
+   fallback), then the dark-mode group, then each remaining theme.
+
+   Scale semantics (same in every theme):
+     base-950  deepest layer (footer, preview sidebars)
+     base-900  page / card background
+     base-800  raised surfaces (code, inputs, table heads)
+     base-700  borders, dividers
+     base-600  disabled text, decorative dots
+     base-500  secondary text
+     base-400  tertiary text, icons
+     base-300  body text
+     base-200  emphasized text
+     base-100  headings, primary UI text
+     base-50   highest-contrast text
+
+   Accent roles:
+     --accent             the brand hue (focus rings, indicators, fills that
+                          carry no text)
+     --accent-light       accent used AS TEXT (links); lighter on dark themes
+     --accent-button      rest fill of solid buttons carrying --on-accent text
+     --accent-hover-solid hover fill of those buttons
+     --accent-2           gradient partner; chosen per theme so --on-accent
+                          text still clears 4.5:1 across the whole gradient
+*/
+
+/* Shared defaults (light mode). Themes override what differs. */
+:root,
+[data-theme] {
+  --on-accent: #ffffff;
+
+  --shadow-color: rgb(20 24 20 / 0.08);
+  --shadow-sm: 0 1px 2px rgb(20 24 20 / 0.06);
+  --shadow-lg: 0 12px 32px -12px rgb(20 24 20 / 0.18), 0 2px 6px rgb(20 24 20 / 0.05);
+  --glow-opacity: 0.22;
+
+  --hl-number: #c2410c;
+  --hl-special: #be185d;
+  --hl-function: #7c3aed;
+  --hl-constant: #4f46e5;
+  --hl-keyword: #1d4ed8;
+  --hl-string: #047857;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* ── Meadow (default) — green & white ──
+   Signature green #86BC25 lives in the swatch; interactive elements use the
+   deeper accessible greens (#26890D / #046A38) so white text stays readable. */
+:root,
+[data-theme="meadow"] {
+  color-scheme: light;
+
+  --base-50: #000000;
+  --base-100: #1a1c1a;
+  --base-200: #2c2e2c;
+  --base-300: #444744;
+  --base-400: #53565a;
+  --base-500: #6d6f72;
+  --base-600: #a7a9a6;
+  --base-700: #d9dbd3;
+  --base-800: #f1f4ea;
+  --base-900: #ffffff;
+  --base-950: #f3f6ec;
+
+  --accent: #26890d;
+  --accent-hover: #046a38;
+  --accent-button: #26890d;
+  --accent-hover-solid: #046a38;
+  --accent-light: #26890d;
+  --accent-2: #0d7a6b;
+  --border-control: #8a8d85;
+
+  --success: #26890d;
+  --warning: #ae6500;
+  --danger: #da291c;
+  --danger-strong: #b22014;
+  --chart-2: #2563eb;
+}
+
+/* Dark-mode group: shadows need far more opacity to read on dark grounds,
+   and syntax colours flip to light-on-dark variants. */
+[data-theme="dark"],
+[data-theme="midnight"],
+[data-theme="meadow-dark"] {
+  color-scheme: dark;
+
+  --shadow-color: rgb(0 0 0 / 0.5);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 40px -12px rgb(0 0 0 / 0.7), 0 2px 6px rgb(0 0 0 / 0.35);
+  --glow-opacity: 0.32;
+
+  --hl-number: #f9a66c;
+  --hl-special: #ff7ab2;
+  --hl-function: #c4a5ff;
+  --hl-constant: #8fb8ff;
+  --hl-keyword: #7aa2ff;
+  --hl-string: #7ee2a8;
+}
+
+/* ── Meadow Dark — black, signature green ──
+   ONE green (#86BC25) for every accent role. It is too light for white, so
+   solid fills take BLACK text via --on-accent rather than a darker green. */
+[data-theme="meadow-dark"] {
+  --base-50: #ffffff;
+  --base-100: #f2f4ef;
+  --base-200: #dfe2da;
+  --base-300: #b7bbb2;
+  --base-400: #959a91;
+  --base-500: #8a8f86;
+  --base-600: #484c45;
+  --base-700: #2b2e29;
+  --base-800: #191b18;
+  --base-900: #0d0e0c;
+  --base-950: #000000;
+
+  --accent: #86bc25;
+  --on-accent: #000000;
+  --accent-hover: #9bd13a;
+  /* Dark-theme idiom: rest a touch darker, hover brightens INTO --accent. */
+  --accent-button: #76a820;
+  --accent-hover-solid: #86bc25;
+  --accent-light: #86bc25;
+  --accent-2: #2fbf71;
+  --border-control: #6c7167;
+
+  --success: #86bc25;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --danger-strong: #b91c1c;
+  --chart-2: #60a5fa;
+}
+
+/* ── Dark — neutral near-black, electric blue ── */
+[data-theme="dark"] {
+  --base-50: #ffffff;
+  --base-100: #f5f5f5;
+  --base-200: #e4e4e7;
+  --base-300: #b8b8bd;
+  --base-400: #8e8e96;
+  --base-500: #84848c;
+  --base-600: #4c4c54;
+  --base-700: #313138;
+  --base-800: #1d1d22;
+  --base-900: #131316;
+  --base-950: #0a0a0c;
+
+  --accent: #0070f3;
+  --accent-hover: #3291ff;
+  /* Rests darker than --accent so hover can BRIGHTEN into it and still clear
+     4.5:1 for white text. */
+  --accent-button: #005ecb;
+  --accent-hover-solid: #0070f3;
+  --accent-light: #54a4ff;
+  --accent-2: #7c3aed;
+  --border-control: #6a6a72;
+
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --danger-strong: #b91c1c;
+  --chart-2: #60a5fa;
+}
+
+/* ── Midnight — blue-tinted dark, indigo accent ── */
+[data-theme="midnight"] {
+  --base-50: #ffffff;
+  --base-100: #eef1f8;
+  --base-200: #d8deec;
+  --base-300: #a9b2c9;
+  --base-400: #8590ad;
+  --base-500: #8089a3;
+  --base-600: #47506e;
+  --base-700: #2d3550;
+  --base-800: #1c2238;
+  --base-900: #131829;
+  --base-950: #0a0e1c;
+
+  --accent: #6265f1;
+  --accent-hover: #808bf8;
+  --accent-button: #4b4eef;
+  --accent-hover-solid: #6265f1;
+  --accent-light: #93a2fc;
+  --accent-2: #9333ea;
+  --border-control: #656e87;
+
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --danger-strong: #be123c;
+  --chart-2: #60a5fa;
+}
+
+/* ── Light — clean neutral, electric blue ── */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --base-50: #09090b;
+  --base-100: #18181b;
+  --base-200: #27272a;
+  --base-300: #3f3f46;
+  --base-400: #52525b;
+  --base-500: #6f6f78;
+  --base-600: #a1a1aa;
+  --base-700: #e0e0e4;
+  --base-800: #f4f4f5;
+  --base-900: #ffffff;
+  --base-950: #f6f6f7;
+
+  --accent: #0070f3;
+  --accent-hover: #0761d1;
+  --accent-button: #0070f3;
+  --accent-hover-solid: #0761d1;
+  --accent-light: #0070f3;
+  --accent-2: #7c3aed;
+  --border-control: #8b8b93;
+
+  --success: #12883e;
+  --warning: #b45309;
+  --danger: #dc2626;
+  --danger-strong: #b91c1c;
+  --chart-2: #2563eb;
+}
+
+/* ── Sand — warm paper, terracotta accent ── */
+[data-theme="sand"] {
+  color-scheme: light;
+
+  --base-50: #1a1612;
+  --base-100: #26211b;
+  --base-200: #37312a;
+  --base-300: #4e463c;
+  --base-400: #5e564a;
+  --base-500: #665e52;
+  --base-600: #aca393;
+  --base-700: #dcd9d1;
+  --base-800: #eceae5;
+  --base-900: #f8f7f4;
+  --base-950: #eeece7;
+
+  --accent: #c2410c;
+  --accent-hover: #9a3412;
+  --accent-button: #c2410c;
+  --accent-hover-solid: #9a3412;
+  --accent-light: #c2410c;
+  --accent-2: #be185d;
+  --border-control: #8c8375;
+
+  --success: #15803d;
+  --warning: #a16207;
+  --danger: #dc2424;
+  --danger-strong: #b91c1c;
+  --chart-2: #2563eb;
+}
+
+/* ── Material mapping ──
+   Material declares its colour variables on body[data-md-color-scheme]; this
+   out-specifies that (0,1,1 vs 0,1,0) and routes every one of them through
+   the theme tokens above, so all Material components follow the theme. */
+:root,
+body[data-md-color-scheme] {
+  color-scheme: inherit;
+
+  --md-default-fg-color: var(--base-100);
+  --md-default-fg-color--light: var(--base-400);
+  --md-default-fg-color--lighter: var(--base-600);
+  --md-default-fg-color--lightest: var(--base-700);
+  --md-default-bg-color: var(--base-900);
+  --md-default-bg-color--light: color-mix(in srgb, var(--base-900) 70%, transparent);
+  --md-default-bg-color--lighter: color-mix(in srgb, var(--base-900) 30%, transparent);
+  --md-default-bg-color--lightest: color-mix(in srgb, var(--base-900) 12%, transparent);
+
+  --md-primary-fg-color: var(--accent);
+  --md-primary-fg-color--light: var(--accent-hover);
+  --md-primary-fg-color--dark: var(--accent-button);
+  --md-primary-bg-color: var(--on-accent);
+  --md-primary-bg-color--light: color-mix(in srgb, var(--on-accent) 70%, transparent);
+  --md-accent-fg-color: var(--accent-light);
+  --md-accent-fg-color--transparent: color-mix(in srgb, var(--accent) 10%, transparent);
+  --md-accent-bg-color: var(--on-accent);
+  --md-accent-bg-color--light: color-mix(in srgb, var(--on-accent) 70%, transparent);
+
+  --md-typeset-color: var(--base-300);
+  --md-typeset-a-color: var(--accent-light);
+  --md-typeset-mark-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  --md-typeset-del-color: color-mix(in srgb, var(--danger) 18%, transparent);
+  --md-typeset-ins-color: color-mix(in srgb, var(--success) 18%, transparent);
+  --md-typeset-kbd-color: var(--base-800);
+  --md-typeset-kbd-accent-color: var(--base-900);
+  --md-typeset-kbd-border-color: var(--base-600);
+  --md-typeset-table-color: var(--base-700);
+  --md-typeset-table-color--light: color-mix(in srgb, var(--accent) 5%, transparent);
+
+  --md-code-fg-color: var(--base-200);
+  --md-code-bg-color: var(--base-800);
+  --md-code-bg-color--light: color-mix(in srgb, var(--base-800) 70%, transparent);
+  --md-code-bg-color--lighter: color-mix(in srgb, var(--base-800) 30%, transparent);
+  --md-code-hl-color: var(--accent);
+  --md-code-hl-color--light: color-mix(in srgb, var(--accent) 12%, transparent);
+  --md-code-hl-number-color: var(--hl-number);
+  --md-code-hl-special-color: var(--hl-special);
+  --md-code-hl-function-color: var(--hl-function);
+  --md-code-hl-constant-color: var(--hl-constant);
+  --md-code-hl-keyword-color: var(--hl-keyword);
+  --md-code-hl-string-color: var(--hl-string);
+  --md-code-hl-name-color: var(--md-code-fg-color);
+  --md-code-hl-operator-color: var(--base-400);
+  --md-code-hl-punctuation-color: var(--base-400);
+  --md-code-hl-comment-color: var(--base-500);
+  --md-code-hl-generic-color: var(--base-400);
+  --md-code-hl-variable-color: var(--base-300);
+
+  --md-admonition-fg-color: var(--base-200);
+  --md-admonition-bg-color: var(--base-900);
+  --md-warning-fg-color: var(--base-100);
+  --md-warning-bg-color: color-mix(in srgb, var(--warning) 20%, var(--base-900));
+
+  --md-footer-fg-color: var(--base-100);
+  --md-footer-fg-color--light: var(--base-400);
+  --md-footer-fg-color--lighter: var(--base-500);
+  --md-footer-bg-color: var(--base-950);
+  --md-footer-bg-color--dark: var(--base-950);
+
+  --md-shadow-z1: var(--shadow-sm);
+  --md-shadow-z2: var(--shadow-lg);
+  --md-shadow-z3: var(--shadow-lg);
+}

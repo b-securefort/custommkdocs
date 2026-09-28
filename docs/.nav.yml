@@ -1,0 +1,11 @@
+# Top tabs, in order. A folder here becomes a tab, and the pages inside it fill
+# the left sidebar; each folder has its own .nav.yml for that order. Pages and
+# folders you don't list are added after these alphabetically, so a new page
+# shows up without editing anything. To hide a page, put `unlisted: true` in
+# its front matter instead of removing it here.
+nav:
+  - index.md
+  - getting-started
+  - components
+  - themes.md
+append_unmatched: true

@@ -1,0 +1,117 @@
+site_name: My Docs
+site_description: Documentation with switchable colour themes, button styles and motion.
+
+# "Edit this page" button: uncomment once the docs live in a repository.
+# edit_uri is the path from the repo root to docs/ on the default branch.
+# repo_url: https://github.com/<org>/<repo>
+# edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  custom_dir: overrides
+  # Fonts are loaded in overrides/main.html (variable Inter, so weights like
+  # 450/600 render true instead of snapping to Material's 400/700 pair).
+  font: false
+  # A single palette *mapping* (not a list): Material renders no toggle of its
+  # own. Colours come from our themes — see stylesheets/themes.css.
+  palette:
+    scheme: default
+    primary: custom
+    accent: custom
+  # EBS Cloud Services logo. Each file has a blue twin (-green → -blue in the
+  # name): the Meadow themes show green, every other theme shows blue. The
+  # swap lives in overrides/partials/logo.html, main.html and appearance.js.
+  logo: images/ebs-logo-green.png
+  favicon: images/ebs-favicon-green.png
+  icon:
+    repo: material/source-branch
+  features:
+    - announce.dismiss
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.progress
+    # No navigation.sections: sidebar groups collapse, and the group holding
+    # the current page opens by itself.
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+
+extra_css:
+  - stylesheets/themes.css
+  - stylesheets/components.css
+
+extra_javascript:
+  - javascripts/appearance.js
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# The menu is built from the files in docs/: order lives in docs/.nav.yml
+# (one per folder), and hooks/page_visibility.py reads `unlisted` / `draft`
+# from each page's front matter. There is deliberately no `nav:` here.
+plugins:
+  - search
+  - awesome-nav:
+      logs:
+        # A page listed in .nav.yml may be hidden in one environment only.
+        no_matches: info
+
+extra:
+  # Which `unlisted:` / `draft:` values apply; mkdocsstaging.yml sets staging.
+  environment: prod
+
+hooks:
+  - hooks/page_visibility.py
+  - hooks/front_matter.py
+
+# Broken links and missing images fail `mkdocs build --strict`.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

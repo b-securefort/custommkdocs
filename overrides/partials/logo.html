@@ -1,0 +1,6 @@
+{#- Both logo colours; components.css shows the one that suits the active
+    theme. theme.logo names the green file, and its blue twin swaps -green
+    for -blue in the name. Used by the header, the mobile drawer and the
+    home hero. -#}
+<img class="theme-logo theme-logo--green" src="{{ config.theme.logo | url }}" alt="logo">
+<img class="theme-logo theme-logo--blue" src="{{ config.theme.logo | replace('-green.', '-blue.') | url }}" alt="logo">
