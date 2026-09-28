@@ -181,20 +181,20 @@ Available types: `note`, `tip`, `info`, `success`, `warning`, `danger`, `example
 ## Buttons and badges
 
 ``` markdown
-[Get started](getting-started/index.md){ .md-button .md-button--primary }
-[Learn more](components/index.md){ .md-button }
+[Get started](../getting-started/index.md){ .md-button .md-button--primary }
+[Learn more](../components/index.md){ .md-button }
 
 <span class="badge badge--success">Stable</span>
 <span class="badge badge--warning">Beta</span>
 ```
 
-[Get started](getting-started/index.md){ .md-button .md-button--primary }
-[Learn more](components/index.md){ .md-button }
+[Get started](../getting-started/index.md){ .md-button .md-button--primary }
+[Learn more](../components/index.md){ .md-button }
 
 <span class="badge badge--success">Stable</span>
 <span class="badge badge--warning">Beta</span>
 
-The [Components](components/index.md) tab shows every style, with the Markdown for each.
+The [Components](../components/index.md) tab shows every style, with the Markdown for each, and [Choosing components](choosing-components.md) says when to use which.
 
 ## Content tabs
 

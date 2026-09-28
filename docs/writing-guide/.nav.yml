@@ -1,0 +1,5 @@
+title: Writing guide
+nav:
+  - index.md
+  - choosing-components.md
+append_unmatched: true

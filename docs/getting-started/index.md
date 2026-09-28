@@ -28,7 +28,7 @@ docs/
   getting-started/                 # a folder of pages is a tab; its pages fill the sidebar
   components/
   themes.md                        # Appearance
-  writing-guide.md                 # staging only (draft: prod): how the team adds content
+  writing-guide/                   # staging only (draft: prod): how the team adds content
   images/  files/                  # team uploads (no pages, so no tab)
   stylesheets/
     themes.css                     # the six palettes + mapping onto Material

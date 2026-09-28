@@ -32,6 +32,12 @@ Styles built for this site, on top of Material.
 
     Releases and roadmaps, with a spine that fills as you scroll.
 
+-   :material-format-list-numbered:{ .lg .middle } __[Steps](steps.md)__
+
+    ---
+
+    Numbered instructions on a spine, in the timeline's style.
+
 </div>
 
 ## Markdown

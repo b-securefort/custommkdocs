@@ -7,6 +7,7 @@ nav:
       - badges.md
       - cards.md
       - timeline.md
+      - steps.md
   - Markdown:
       - admonitions.md
       - code-blocks.md

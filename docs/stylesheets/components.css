@@ -1990,6 +1990,84 @@ body {
 .md-typeset .timeline dt.red    { --tl-color: #b91c1c; --tl-on: #fff; }
 .md-typeset .timeline dt.grey   { --tl-color: var(--base-600); --tl-on: var(--base-50); }
 
+/* ── Steps ──
+   A numbered list inside <div class="steps" markdown>, drawn like the
+   timeline: a numbered node on a spine. It stays an <ol>, so numbering is
+   automatic and screen readers announce a list. No scroll fill: on a how-to
+   page a filled node would read as "done". */
+.md-typeset .steps {
+  --st-node: 1.6rem;
+  --st-gap: 1.4rem;
+  margin: 1.8em 0;
+}
+
+.md-typeset .steps > ol {
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset .steps > ol > li {
+  counter-increment: step;
+  position: relative;
+  margin: 0;
+  padding: 0.12rem 0 var(--st-gap) calc(var(--st-node) + 1rem);
+  color: var(--base-300);
+}
+
+.md-typeset .steps > ol > li:last-child {
+  padding-bottom: 0;
+}
+
+/* Numbered node */
+.md-typeset .steps > ol > li::before {
+  content: counter(step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: var(--st-node);
+  height: var(--st-node);
+  border-radius: 50%;
+  background: var(--accent-button);
+  color: var(--on-accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 6px 16px -8px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* Spine from each node down to the next */
+.md-typeset .steps > ol > li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--st-node) + 0.35rem);
+  bottom: 0.35rem;
+  left: calc(var(--st-node) / 2);
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 30%, var(--base-700));
+}
+
+.md-typeset .steps > ol > li > :first-child {
+  margin-top: 0;
+}
+
+.md-typeset .steps > ol > li > :last-child {
+  margin-bottom: 0;
+}
+
+.md-typeset .steps > ol > li strong {
+  color: var(--base-100);
+}
+
 /* ── Swatch strip used in docs pages ── */
 .md-typeset .palette-strip {
   display: flex;
