@@ -1,11 +1,12 @@
-/* Appearance: colour theme, button style and motion level.
+/* Appearance: colour theme, button style, motion level and sidebar groups.
  *
- * All three live as attributes on <html> (data-theme, data-button-style,
- * data-motion) that the stylesheets key off. overrides/main.html sets them
- * before first paint from localStorage; this file adds the controls that
- * change them — the palette popover in the header and the panels on the
- * Appearance page — plus the motion effects (theme reveal, ripple, scroll
- * reveal, card spotlight, reading progress).
+ * All four live as attributes on <html> (data-theme, data-button-style,
+ * data-motion, data-nav) that the stylesheets key off. overrides/main.html
+ * sets them before first paint from localStorage; this file adds the
+ * controls that change them — the palette popover in the header and the
+ * panels on the Appearance page — plus the motion effects (theme reveal,
+ * ripple, scroll reveal, card spotlight, reading progress, jump highlight,
+ * contents marker, copy check).
  *
  * Keep the id lists below in sync with the pre-paint script in main.html. */
 (function () {
@@ -33,10 +34,16 @@
     { id: "off", label: "Off", description: "No animation at all." },
   ];
 
+  var NAV_MODES = [
+    { id: "collapsed", label: "Collapsed", description: "Only the group you're reading in is open. Click a group to open it." },
+    { id: "expanded", label: "Expanded", description: "Every group starts open, and you can still close any of them. Wide screens only." },
+  ];
+
   var SETTINGS = {
     theme: { attr: "data-theme", key: "docs.theme", options: THEMES, noun: "Theme" },
     buttonStyle: { attr: "data-button-style", key: "docs.buttonStyle", options: BUTTON_STYLES, noun: "Button style" },
     motion: { attr: "data-motion", key: "docs.motion", options: MOTION_LEVELS, noun: "Motion" },
+    nav: { attr: "data-nav", key: "docs.nav", options: NAV_MODES, noun: "Sidebar" },
   };
 
   var ICON_PALETTE =
@@ -56,7 +63,7 @@
     try {
       base = JSON.parse(config.textContent).base || ".";
     } catch (e) {}
-    return new URL(base.replace(/\/?$/, "/") + "themes/", location.href).href;
+    return new URL(base.replace(/\/?$/, "/") + "appearance/", location.href).href;
   })();
 
   /* ── Storage ── */
@@ -88,6 +95,7 @@
   function fallback(name) {
     if (name === "theme") return systemDark.matches ? "meadow-dark" : "meadow";
     if (name === "motion") return systemCalm.matches ? "off" : "full";
+    if (name === "nav") return "collapsed";
     return "rounded";
   }
 
@@ -111,6 +119,7 @@
     var apply = function () {
       root.setAttribute(setting.attr, id);
       if (name === "theme") syncFavicon(id);
+      if (name === "nav") resetNavGroups();
       syncControls();
     };
     if (name === "theme") withThemeTransition(apply, origin);
@@ -365,6 +374,22 @@
     return preview;
   }
 
+  // A miniature sidebar: three groups, open or closed as the mode leaves them.
+  function navPreview(mode) {
+    var preview = el("span", "nav-preview", { "data-demo": mode.id, "aria-hidden": "true" });
+    var html = "";
+    for (var i = 0; i < 3; i++) {
+      var open = mode.id === "expanded" || i === 1;
+      html +=
+        '<span class="nav-preview__group' + (open ? " is-open" : "") + '">' +
+        '<span class="nav-preview__head"><span class="tp-line"></span><i></i></span>' +
+        (open ? '<span class="tp-line"></span><span class="tp-line' + (i === 1 ? " tp-line--accent" : "") + '"></span>' : "") +
+        "</span>";
+    }
+    preview.innerHTML = html;
+    return preview;
+  }
+
   function fieldset(legendText, gridClass, cards) {
     var set = el("fieldset");
     var legend = el("legend");
@@ -400,6 +425,11 @@
         return optionCard("motion", m, motionPreview(m));
       }))
     );
+    host.appendChild(
+      fieldset("Sidebar", "option-grid option-grid--wide", NAV_MODES.map(function (n) {
+        return optionCard("nav", n, navPreview(n));
+      }))
+    );
 
     var footer = el("div", "appearance__footer");
     var note = el("span");
@@ -414,7 +444,7 @@
     host.appendChild(footer);
 
     // The name attributes double as setting names ("theme", "buttonStyle",
-    // "motion"), which is what syncControls matches on.
+    // "motion", "nav"), which is what syncControls matches on.
     syncControls();
   }
 
@@ -490,6 +520,7 @@
     ".md-typeset details",
     ".md-typeset .timeline > dl > dt",
     ".md-typeset .timeline > dl > dd",
+    ".md-typeset .steps > ol > li",
     ".md-typeset .reveal",
   ].join(",");
 
@@ -497,10 +528,18 @@
     "IntersectionObserver" in window
       ? new IntersectionObserver(
           function (entries) {
+            var batch = new Map();
             entries.forEach(function (entry) {
               if (!entry.isIntersecting) return;
               var node = entry.target;
               revealObserver.unobserve(node);
+              // "batch": stagger only among siblings arriving together, so a
+              // step scrolled to later doesn't wait behind the ones above it.
+              if (node.getAttribute("data-reveal") === "batch") {
+                var i = batch.get(node.parentElement) || 0;
+                batch.set(node.parentElement, i + 1);
+                node.style.setProperty("--reveal-i", String(Math.min(i, 8)));
+              }
               node.classList.add("is-revealed");
               // Drop the reveal state once it has played, so the element's own
               // hover transitions aren't slowed by the stagger delay.
@@ -528,7 +567,7 @@
       if (parent.parentElement && parent.parentElement.classList.contains("timeline")) {
         index = node.tagName === "DT" ? 0 : 1;
       }
-      node.setAttribute("data-reveal", "");
+      node.setAttribute("data-reveal", parent.parentElement && parent.parentElement.classList.contains("steps") ? "batch" : "");
       node.style.setProperty("--reveal-i", String(Math.min(index, 8)));
       revealObserver.observe(node);
     });
@@ -615,6 +654,172 @@
     pressSegment(button);
   });
 
+  /* ── Sidebar groups: data-nav="expanded" ──
+     components.css opens every group nobody has touched yet, from the first
+     paint — the same "open but closable" state Material's navigation.expand
+     uses. The first click on such a group means "close", but it switches the
+     checkbox on, so switch it back off and mark the group touched, which lets
+     the CSS go and Material's own close animation runs. Wide screens only:
+     below 76.25em the menu is a drawer of sliding panels. */
+  var wideNav = window.matchMedia("(min-width: 76.25em)");
+  var NAV_TOGGLE = ".md-nav--primary .md-nav__item--nested > .md-nav__toggle";
+
+  function navExpanded() {
+    return current("nav") === "expanded" && wideNav.matches;
+  }
+
+  function syncNavGroups() {
+    var expanded = navExpanded();
+    document.querySelectorAll(NAV_TOGGLE).forEach(function (toggle) {
+      var list = toggle.parentElement.querySelector(":scope > .md-nav");
+      if (!list) return;
+      var open = toggle.checked || (expanded && !toggle.hasAttribute("data-nav-touched"));
+      list.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  }
+
+  function resetNavGroups() {
+    document.querySelectorAll(NAV_TOGGLE + "[data-nav-touched]").forEach(function (toggle) {
+      toggle.removeAttribute("data-nav-touched");
+    });
+    syncNavGroups();
+  }
+
+  document.addEventListener("change", function (event) {
+    var toggle = event.target;
+    if (!toggle.matches || !toggle.matches(NAV_TOGGLE)) return;
+    if (navExpanded() && !toggle.hasAttribute("data-nav-touched")) {
+      toggle.setAttribute("data-nav-touched", "");
+      toggle.checked = false;
+    }
+    syncNavGroups();
+  });
+  onMediaChange(wideNav, syncNavGroups);
+
+  /* ── Jump highlight ──
+     Following a #link briefly tints what it points at, so the eye lands on
+     the right heading. The click, the hashchange and — since instant
+     navigation re-fetches and swaps the page even for a same-page link — the
+     remount can each ask for it; the element check below keeps that to one
+     flash on whichever heading is actually in the page. */
+  var lastJump = { node: null, at: 0 };
+
+  function flashTarget(hash) {
+    if (!hash || hash.length < 2) return;
+    var id;
+    try {
+      id = decodeURIComponent(hash.slice(1));
+    } catch (e) {
+      return;
+    }
+    var target = document.getElementById(id);
+    if (!target || !target.closest(".md-content")) return;
+    if (lastJump.node === target && Date.now() - lastJump.at < 400) return;
+    lastJump = { node: target, at: Date.now() };
+    target.classList.remove("is-target");
+    void target.offsetWidth; // restart on a repeat jump
+    target.classList.add("is-target");
+  }
+
+  document.addEventListener("animationend", function (event) {
+    if (event.animationName === "targetFlash") event.target.classList.remove("is-target");
+  });
+
+  document.addEventListener("click", function (event) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+    var link = event.target.closest && event.target.closest('a[href*="#"]');
+    if (!link || link.target) return;
+    var url = new URL(link.href, location.href);
+    if (!url.hash || url.pathname !== location.pathname) return;
+    flashTarget(url.hash);
+  });
+
+  window.addEventListener("hashchange", function () {
+    flashTarget(location.hash);
+  });
+
+  /* ── Table of contents marker ──
+     A bar beside the right-hand contents that glides to the section being
+     read. Material moves .md-nav__link--active as you scroll; a
+     MutationObserver follows it. */
+  var tocObserver = null;
+  var queueTocMarker = function () {};
+
+  function mountTocMarker() {
+    if (tocObserver) tocObserver.disconnect();
+    tocObserver = null;
+    queueTocMarker = function () {};
+    var nav = document.querySelector(".md-sidebar--secondary .md-nav--secondary");
+    if (!nav || !nav.querySelector(":scope > .md-nav__list")) return;
+    var marker = nav.querySelector(":scope > .toc-marker");
+    if (!marker) {
+      marker = el("span", "toc-marker", { "aria-hidden": "true" });
+      nav.appendChild(marker);
+    }
+
+    var queued = false;
+    function place() {
+      queued = false;
+      var links = nav.querySelectorAll(".md-nav__link--active");
+      var link = links[links.length - 1];
+      if (!link || !link.offsetParent) {
+        marker.classList.remove("is-visible");
+        return;
+      }
+      // Measured against the nav, lined up with the track on its list.
+      var box = nav.getBoundingClientRect();
+      var list = nav.querySelector(":scope > .md-nav__list");
+      marker.style.left = list.getBoundingClientRect().left - box.left + "px";
+      marker.style.transform = "translateY(" + (link.getBoundingClientRect().top - box.top) + "px)";
+      marker.style.height = link.offsetHeight + "px";
+      // The first placement lands without gliding in from the top.
+      if (!marker.classList.contains("is-visible")) {
+        marker.classList.add("is-visible");
+        requestAnimationFrame(function () {
+          marker.classList.add("is-ready");
+        });
+      }
+    }
+    function queue() {
+      if (!queued) {
+        queued = true;
+        requestAnimationFrame(place);
+      }
+    }
+
+    tocObserver = new MutationObserver(queue);
+    tocObserver.observe(nav, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    queueTocMarker = queue;
+    queue();
+  }
+
+  window.addEventListener(
+    "resize",
+    function () {
+      queueTocMarker();
+    },
+    { passive: true }
+  );
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () {
+      queueTocMarker();
+    });
+  }
+
+  /* ── Copy confirmation: the copy icon turns into a check for a moment ── */
+  document.addEventListener("click", function (event) {
+    var button =
+      event.target.closest && event.target.closest('.md-code__button[data-md-type="copy"], .md-clipboard:not(.md-clipboard--inline)');
+    if (!button) return;
+    clearTimeout(button._copiedTimer);
+    button.classList.remove("is-copied");
+    void button.offsetWidth;
+    button.classList.add("is-copied");
+    button._copiedTimer = setTimeout(function () {
+      button.classList.remove("is-copied");
+    }, 1600);
+  });
+
   /* ── Mount on every page (Material's instant navigation re-emits document$) ── */
 
   function mountAll() {
@@ -623,7 +828,10 @@
     mountAppearancePanel();
     mountToggleGroups();
     mountReveal();
+    mountTocMarker();
+    syncNavGroups();
     syncControls();
+    flashTarget(location.hash);
   }
 
   if (window.document$ && typeof window.document$.subscribe === "function") {

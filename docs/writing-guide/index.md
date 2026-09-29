@@ -44,7 +44,7 @@ Pages you don't list still appear, after the listed ones in alphabetical order. 
 ### Add to the menu
 
 - **Choose a page's place:** add its filename to the `nav:` list of the `.nav.yml` in the same folder, where you want it. Line each `-` up with the one above it.
-- **Group pages:** write a group name ending in `:`, then list the pages under it, indented by four more spaces, like `Invoices:` above. Groups fold open and closed in the sidebar.
+- **Group pages:** write a group name ending in `:`, then list the pages under it, indented by four more spaces, like `Invoices:` above. Groups fold open and closed in the sidebar; readers who want them all open can pick *Expanded* under Sidebar on the [Appearance](../appearance.md) page.
 - **Rename an entry:** the menu shows the page's `# Title`. To show something shorter, write `- Billing questions: faq.md` instead of `- faq.md`. The page itself keeps its title.
 - **Link to another site:** add `- Status page: https://status.example.com`. It appears in the menu like a page.
 - **Add a tab:** create a folder in `docs/` with an `index.md` and a `.nav.yml` like the one above, then add the folder's name to `docs/.nav.yml` where the tab should appear. `title:` sets the name on the tab.

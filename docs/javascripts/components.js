@@ -89,13 +89,20 @@
     }
   }
 
-  function fillPlaceholders(name, value) {
+  /** `pulse` briefly lights up each changed span, so a reader typing in the
+   *  form can see which parts of the commands their value went into. */
+  function fillPlaceholders(name, value, pulse) {
     var token = "<" + name + ">";
     document.querySelectorAll('.md-typeset .ph[data-ph="' + name + '"]').forEach(function (span) {
       span.textContent = value || token;
       span.classList.toggle("ph--filled", !!value);
       if (value) span.title = token;
       else span.removeAttribute("title");
+      if (pulse) {
+        span.classList.remove("ph--changed");
+        void span.offsetWidth; // restart on every keystroke
+        span.classList.add("ph--changed");
+      }
     });
     document.querySelectorAll('.your-values__input[data-name="' + name + '"]').forEach(function (input) {
       if (input.value !== value) input.value = value;
@@ -150,7 +157,7 @@
         input.addEventListener("input", function () {
           var value = input.value.trim();
           write(STORAGE_PREFIX + field.name, value);
-          fillPlaceholders(field.name, value);
+          fillPlaceholders(field.name, value, true);
         });
         wrap.appendChild(label);
         wrap.appendChild(input);
@@ -160,7 +167,7 @@
       clear.addEventListener("click", function () {
         fields.forEach(function (field) {
           write(STORAGE_PREFIX + field.name, null);
-          fillPlaceholders(field.name, "");
+          fillPlaceholders(field.name, "", true);
         });
         var first = grid.querySelector("input");
         if (first) first.focus();

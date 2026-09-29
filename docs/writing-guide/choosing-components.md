@@ -81,7 +81,7 @@ Pair one strong button with one quiet one. Two strong buttons side by side compe
 
 ### Button style is the reader's choice
 
-Rounded, Pill, Sharp and Tactile are chosen by each reader on the [Appearance](../themes.md) page. Don't set `data-button-style` on a page, except to preview the styles as the [buttons page](../components/buttons.md#button-styles) does.
+Rounded, Pill, Sharp and Tactile are chosen by each reader on the [Appearance](../appearance.md) page. Don't set `data-button-style` on a page, except to preview the styles as the [buttons page](../components/buttons.md#button-styles) does.
 
 ## Badges
 
@@ -301,4 +301,4 @@ Most pages are one of these shapes. Pick yours and fill it in.
 - [ ] Cloud pages have `applies_to`, `owner` and a `last_reviewed` date from a real run-through.
 - [ ] No subscription IDs, account IDs, tenant names or email addresses in screenshots or examples.
 - [ ] Every placeholder in the code is listed in the page's Your values box.
-- [ ] Checked in one light theme, one dark theme, and with motion set to *Off*, from the [Appearance](../themes.md) page.
+- [ ] Checked in one light theme, one dark theme, and with motion set to *Off*, from the [Appearance](../appearance.md) page.

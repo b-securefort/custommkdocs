@@ -3,3 +3,4 @@ mkdocs-material>=9.7,<10
 mkdocs-awesome-nav>=3.3,<4
 mkdocs-drawio>=1.16,<2
 mkdocs-glightbox>=0.5,<1
+mkdocs-redirects>=1.2,<2

@@ -32,7 +32,7 @@ features:
     - icon: material/palette-swatch-outline
       title: Six colour themes
       text: Meadow, Meadow Dark, Dark, Midnight, Light and Sand, the same palettes as Nexus.
-      link: themes.md
+      link: appearance.md
     - icon: material/gesture-tap-button
       title: Buttons with character
       text: Primary, soft, outline, ghost, gradient, glow and danger, in four shapes.
@@ -40,7 +40,7 @@ features:
     - icon: material/motion-outline
       title: Motion, tuned
       text: Theme wipes, ripples and reveal on scroll. Choose Full, Subtle or Off.
-      link: themes.md
+      link: appearance.md
     - icon: material/contrast-circle
       title: Accessible by default
       text: WCAG-checked contrast, visible focus rings and reduced-motion support.
@@ -84,7 +84,7 @@ cta:
       link: getting-started/index.md
       style: primary
     - text: Pick a theme
-      link: themes.md
+      link: appearance.md
       icon: material/palette-outline
       style: ghost
 ---

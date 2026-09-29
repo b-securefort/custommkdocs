@@ -10,7 +10,7 @@
   <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
   {#- Paint the saved appearance before the first frame, so a reload never
       flashes the default theme. Keep these id lists in sync with THEMES /
-      BUTTON_STYLES / MOTION_LEVELS in javascripts/appearance.js. -#}
+      BUTTON_STYLES / MOTION_LEVELS / NAV_MODES in javascripts/appearance.js. -#}
   <script>
     (function () {
       var root = document.documentElement;
@@ -35,6 +35,8 @@
         ["rounded", "pill", "sharp", "tactile"], "rounded"));
       root.setAttribute("data-motion", pick(read("docs.motion"),
         ["full", "subtle", "off"], prefersCalm ? "off" : "full"));
+      root.setAttribute("data-nav", pick(read("docs.nav"),
+        ["collapsed", "expanded"], "collapsed"));
     })();
   </script>
 {% endblock %}
@@ -43,7 +45,7 @@
   <span class="announce">
     <span class="badge badge--live">New</span>
     Six colour themes, four button styles and a motion setting —
-    <a href="{{ 'themes/' | url }}">open Appearance</a>
+    <a href="{{ 'appearance/' | url }}">open Appearance</a>
     or use the palette in the header.
   </span>
 {% endblock %}

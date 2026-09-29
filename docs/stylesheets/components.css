@@ -541,6 +541,73 @@ body {
   color: var(--accent-light);
 }
 
+/* Sidebar setting "Expanded" (data-nav, appearance.js): every group nobody
+   has clicked yet shows open, mirroring Material's own navigation.expand
+   state (.md-toggle--indeterminate), including its no-transition, so pages
+   don't unfold on load. Wide screens only; below this the menu is a drawer
+   of sliding panels, where "open" means "slid in". */
+@media screen and (min-width: 76.25em) {
+  :root[data-nav="expanded"] .md-nav--primary .md-nav__item--nested > .md-nav__toggle:not([data-nav-touched]) ~ .md-nav {
+    grid-template-rows: minmax(0.4rem, 1fr);
+    opacity: 1;
+    visibility: visible;
+    transition: none;
+  }
+
+  :root[data-nav="expanded"] .md-nav--primary .md-nav__item--nested > .md-nav__toggle:not([data-nav-touched]) ~ .md-nav__link .md-nav__icon::after {
+    transform: rotate(90deg);
+  }
+}
+
+/* Contents marker: a faint track beside the right-hand contents, and a bar
+   on it that glides to the section being read (appearance.js places it).
+   It only glides at Full motion; otherwise it moves in one step. */
+.md-sidebar--secondary .md-nav--secondary {
+  position: relative;
+}
+
+.md-sidebar--secondary .md-nav--secondary > .md-nav__list {
+  position: relative;
+}
+
+.md-sidebar--secondary .md-nav--secondary > .md-nav__list::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--base-700);
+}
+
+.toc-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  margin-left: -0.5px;
+  border-radius: 2px;
+  background: var(--accent-light);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.toc-marker.is-visible {
+  opacity: 1;
+}
+
+.toc-marker.is-ready {
+  transition:
+    opacity 0.2s,
+    transform 0.35s var(--ease-out),
+    height 0.35s var(--ease-out);
+}
+
+:root:not([data-motion="full"]) .toc-marker.is-ready {
+  transition: opacity 0.2s;
+}
+
 /* ── Footer ── */
 .md-footer {
   border-top: 1px solid var(--base-700);
@@ -653,6 +720,43 @@ html .md-footer-meta.md-typeset a {
   border-radius: 12px;
 }
 
+/* Copy confirmation: appearance.js adds .is-copied on click, and the copy
+   icon becomes a check for a moment (as well as Material's "Copied" toast). */
+:root {
+  --copied-icon: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7 9 19l-5.5-5.5 1.41-1.41L9 16.17 19.59 5.59z"/></svg>');
+}
+
+.md-code__button[data-md-type="copy"].is-copied,
+.md-clipboard.is-copied {
+  color: var(--accent-light) !important;
+}
+
+.md-code__button[data-md-type="copy"].is-copied::after,
+.md-clipboard.is-copied::after {
+  -webkit-mask-image: var(--copied-icon);
+  mask-image: var(--copied-icon);
+  animation: copiedPop 0.35s var(--ease-out);
+}
+
+@keyframes copiedPop {
+  from {
+    opacity: 0.3;
+    transform: scale(calc(1 - 0.4 * var(--motion-scale)));
+  }
+}
+
+/* Content tabs: the panel that comes in fades up from nothing instead of
+   snapping (Material shows it by switching display, which restarts this). */
+.md-typeset .tabbed-block {
+  animation: tabIn 0.2s var(--ease-out);
+}
+
+@keyframes tabIn {
+  from {
+    opacity: 0;
+  }
+}
+
 .md-typeset table:not([class]) {
   border: 1px solid var(--base-700);
   border-radius: 12px;
@@ -699,6 +803,64 @@ html .md-footer-meta.md-typeset a {
 
 .md-typeset details[open] {
   box-shadow: var(--shadow-sm);
+}
+
+/* Collapsible blocks: the body fades in and out; at Full motion it also
+   grows to its height. Needs ::details-content (and interpolate-size for
+   the height); browsers without them open instantly, as before.
+
+   flow-root keeps the body's margins inside it. Otherwise Material's 0.6rem
+   margin on the last child collapses out of the box only at height: auto,
+   so the block jumped 12px at the end of opening and the start of closing. */
+@supports selector(::details-content) {
+  :root:not([data-motion="off"]) .md-typeset details::details-content {
+    display: flow-root;
+    opacity: 0;
+    transition:
+      opacity 0.25s,
+      content-visibility 0.25s allow-discrete;
+  }
+
+  :root:not([data-motion="off"]) .md-typeset details[open]::details-content {
+    opacity: 1;
+  }
+}
+
+@supports (interpolate-size: allow-keywords) and selector(::details-content) {
+  :root[data-motion="full"] .md-typeset details {
+    interpolate-size: allow-keywords;
+  }
+
+  /* An even curve, not --ease-out: that one covers ~90% of the height in the
+     first 100ms and then crawls, which reads as the block getting stuck. */
+  :root[data-motion="full"] .md-typeset details::details-content {
+    block-size: 0;
+    overflow-y: clip;
+    transition:
+      block-size 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.25s,
+      content-visibility 0.3s allow-discrete;
+  }
+
+  :root[data-motion="full"] .md-typeset details[open]::details-content {
+    block-size: auto;
+  }
+}
+
+/* Jump highlight: whatever a #link lands on (a heading, usually) is tinted
+   briefly and fades back, so the eye finds it (appearance.js adds
+   .is-target). No end frame: it fades back to the element's own colours. */
+.md-typeset .is-target {
+  border-radius: 6px;
+  animation: targetFlash 1.8s var(--ease-in-out);
+}
+
+@keyframes targetFlash {
+  0%,
+  25% {
+    background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+    box-shadow: 0 0 0 0.3em color-mix(in srgb, var(--accent) 16%, transparent);
+  }
 }
 
 /* ── Buttons ──
@@ -1843,6 +2005,52 @@ html .md-footer-meta.md-typeset a {
 
 @keyframes demoFade {
   to { opacity: 0.25; }
+}
+
+/* Sidebar preview: three groups, open ones showing their pages. */
+.nav-preview {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  height: 4.6rem;
+  padding: 0 18%;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--base-950);
+}
+
+.nav-preview__group {
+  display: grid;
+  gap: 4px;
+}
+
+.nav-preview__group > .tp-line {
+  width: 55%;
+  margin-left: 0.5rem;
+}
+
+.nav-preview__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-preview__head .tp-line {
+  width: 62%;
+  background: var(--base-500);
+}
+
+.nav-preview__head i {
+  width: 4px;
+  height: 4px;
+  border-right: 1.5px solid var(--base-500);
+  border-bottom: 1.5px solid var(--base-500);
+  transform: rotate(-45deg);
+}
+
+.nav-preview__group.is-open .nav-preview__head i {
+  transform: rotate(45deg);
 }
 
 .md-typeset .appearance__footer {

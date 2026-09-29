@@ -93,7 +93,7 @@ In a `button-group--toggle`, clicking a segment selects it instead of following 
 
 ## Button styles
 
-The shape and feel of every button comes from the **Buttons** setting on the [Appearance](../themes.md) page. The four styles are shown below.
+The shape and feel of every button comes from the **Buttons** setting on the [Appearance](../appearance.md) page. The four styles are shown below.
 
 <div class="grid" markdown>
 <div class="card" markdown>

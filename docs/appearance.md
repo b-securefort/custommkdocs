@@ -7,7 +7,7 @@ hide:
 
 # Appearance
 
-Choose a colour theme, a button style and how much motion you want. Changes apply instantly across the whole site.
+Choose a colour theme, a button style, how much motion you want and whether the sidebar starts with its groups open. Changes apply instantly across the whole site.
 
 <div data-appearance-panel>
   <noscript>

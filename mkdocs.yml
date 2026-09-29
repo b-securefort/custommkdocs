@@ -124,6 +124,11 @@ plugins:
       zoomable: true
       draggable: false
       background: none
+  # Old addresses keep working after a page is renamed or moved: map the old
+  # file to the new one (paths from docs/).
+  - redirects:
+      redirect_maps:
+        themes.md: appearance.md
 
 extra:
   # Which `unlisted:` / `draft:` values apply; mkdocsstaging.yml sets staging.

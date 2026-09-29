@@ -27,7 +27,7 @@ docs/
   index.md                         # Home: all content is in its front matter
   getting-started/                 # a folder of pages is a tab; its pages fill the sidebar
   components/
-  themes.md                        # Appearance
+  appearance.md                    # Appearance
   writing-guide/                   # staging only (draft: prod): how the team adds content
   images/  files/                  # team uploads (no pages, so no tab)
   stylesheets/
