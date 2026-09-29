@@ -50,9 +50,11 @@ theme:
 extra_css:
   - stylesheets/themes.css
   - stylesheets/components.css
+  - stylesheets/cloud.css
 
 extra_javascript:
   - javascripts/appearance.js
+  - javascripts/components.js
 
 markdown_extensions:
   - abbr
@@ -79,7 +81,12 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.mark
   - pymdownx.smartsymbols
-  - pymdownx.snippets
+  # Every page gets includes/abbreviations.md appended, so a term defined
+  # there once shows its meaning on hover everywhere it's used.
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -100,14 +107,45 @@ plugins:
       logs:
         # A page listed in .nav.yml may be hidden in one environment only.
         no_matches: info
+  # Architecture diagrams: ![Alt text](diagram.drawio) embeds the draw.io
+  # viewer. It loads from viewer.diagrams.net, on pages with a diagram only;
+  # javascripts/components.js takes care of instant navigation and tabs.
+  - drawio:
+      edit: false
+      border: 10
+      toolbar:
+        tags: false
+        layers: false
+  # Click any content image to enlarge it. Add { .off-glb } to an image to
+  # opt out; hooks/components.py opts out draw.io diagrams.
+  - glightbox:
+      effect: zoom
+      slide_effect: none
+      zoomable: true
+      draggable: false
+      background: none
 
 extra:
   # Which `unlisted:` / `draft:` values apply; mkdocsstaging.yml sets staging.
   environment: prod
+  # Months before a page's `last_reviewed` date counts as overdue, unless
+  # its front matter sets `review_every`. See hooks/page_info.py.
+  review_months: 6
+  # Footer copyright line (overrides/partials/copyright.html); the date is
+  # the build date. Not `version`: Material reserves that for mike.
+  release: 1.0.0
+  built_by: Balaji
 
 hooks:
   - hooks/page_visibility.py
   - hooks/front_matter.py
+  - hooks/components.py
+  - hooks/page_info.py
+
+# `mkdocs serve` reloads when these change too.
+watch:
+  - includes
+  - hooks
 
 # Broken links and missing images fail `mkdocs build --strict`.
 validation:

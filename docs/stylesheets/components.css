@@ -252,14 +252,34 @@ body {
 
 /* Logo colour follows the theme family: green for the Meadow themes, blue
    for the rest (overrides/partials/logo.html renders both). :root scopes it
-   to the page theme, not the preview cards on the Appearance page. */
+   to the page theme, not the preview cards on the Appearance page.
+   !important: Material's drawer rule (.md-nav__title .md-nav__button.md-logo
+   img { display: block }) outranks these, which showed both logos at once
+   once the tabs fold into the drawer on narrow windows. */
 :root[data-theme="meadow"] .theme-logo--blue,
 :root[data-theme="meadow-dark"] .theme-logo--blue,
 :root[data-theme="dark"] .theme-logo--green,
 :root[data-theme="midnight"] .theme-logo--green,
 :root[data-theme="light"] .theme-logo--green,
 :root[data-theme="sand"] .theme-logo--green {
-  display: none;
+  display: none !important;
+}
+
+/* Drawer title band: the header's fill, not Material's --md-primary-fg-color
+   (the brighter --accent), so it matches the header it slides over. */
+.md-nav--primary .md-nav__title[for="__drawer"] {
+  background-color: var(--accent-button);
+  color: var(--on-accent);
+}
+
+/* Drawer: the same white rim as the header, so the logo doesn't melt into
+   the accent-filled title band either. */
+.md-nav__title .md-nav__button.md-logo img {
+  filter:
+    drop-shadow(0 0 0.8px #ffffff)
+    drop-shadow(0 0 0.8px #ffffff)
+    drop-shadow(0 0 0.8px #ffffff)
+    drop-shadow(0 4px 6px rgb(0 0 0 / 0.35));
 }
 
 .md-header__button.md-logo:hover {
@@ -540,6 +560,35 @@ body {
   transform: translateX(calc(3px * var(--motion-scale)));
 }
 
+/* Copyright strip: the header's accent band again, so the page is framed
+   top and bottom. Prev/next above keeps the neutral footer ground. The
+   footer colour variables are rebased onto --on-accent, which every theme
+   tunes for contrast against --accent-button. */
+.md-footer-meta {
+  --md-footer-fg-color: var(--on-accent);
+  --md-footer-fg-color--light: var(--on-accent);
+  --md-footer-fg-color--lighter: color-mix(in srgb, var(--on-accent) 85%, transparent);
+  background-color: var(--accent-button);
+}
+
+.md-footer-meta :focus-visible {
+  outline-color: var(--on-accent);
+}
+
+html .md-footer-meta.md-typeset a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-copyright__highlight {
+  font-weight: 550;
+}
+
+.md-copyright__sep {
+  margin: 0 0.35em;
+  opacity: 0.6;
+}
+
 /* ── Typography ── */
 .md-typeset h1,
 .md-typeset h2,
@@ -564,7 +613,7 @@ body {
 }
 
 /* Links grow an underline from the left instead of snapping one on. */
-.md-typeset a:not(.md-button):not(.headerlink):not(.footnote-ref):not(.footnote-backref) {
+.md-typeset a:not(.md-button):not(.headerlink):not(.footnote-ref):not(.footnote-backref):not(.glightbox) {
   text-decoration: none;
   background: linear-gradient(currentColor, currentColor) 0 100% / 0 1px no-repeat;
   transition:
@@ -572,7 +621,7 @@ body {
     color 0.15s;
 }
 
-.md-typeset a:not(.md-button):not(.headerlink):not(.footnote-ref):not(.footnote-backref):hover {
+.md-typeset a:not(.md-button):not(.headerlink):not(.footnote-ref):not(.footnote-backref):not(.glightbox):hover {
   background-size: 100% 1px;
 }
 
