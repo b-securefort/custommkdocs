@@ -8,8 +8,12 @@ its content, which javascripts/writer.js reads:
     icons     SVGs for the card icons offered in the picker
     ui        SVGs for the writer's own buttons
     platforms names and icons for `applies_to`, as hooks/page_info.py shows them
+    files     the images and downloads already in docs/images/ and docs/files/,
+              so the writer can tell a missing file from one that's on the site
     repo      extra.writer in mkdocs.yml: the Azure DevOps repository the
               publish instructions point at
+    bundle    extra.writer too: the S3 bucket bundles are uploaded to and the
+              pipeline that adds them to the repository (pipelines/ingest-bundle.yml)
 
 The site is static, so this is built once and the writer needs no server.
 """
@@ -60,6 +64,7 @@ UI_ICONS = [
     "alert-box-outline", "console", "console-line", "form-textbox", "lifebuoy",
     "table", "sitemap-outline", "view-grid-outline", "gesture-tap-button",
     "timeline-text-outline", "magnify", "eye-outline", "source-pull",
+    "paperclip", "folder-zip-outline", "pencil-outline", "file-outline",
 ]
 
 # Same names and icons as hooks/page_info.py.
@@ -109,8 +114,18 @@ def on_page_context(context, page, config, nav):
             folders[folder] = titles.get(index) or folder.replace("-", " ").capitalize()
     folders[""] = "Top level (a tab of its own)"
 
-    repo = dict(config.extra.get("writer") or {})
-    repo.setdefault("branch", "main")
+    writer = config.extra.get("writer") or {}
+    repo = {key: writer.get(key) or "" for key in ("organization", "project", "repository")}
+    repo["branch"] = writer.get("branch") or "main"
+    # An empty value leaves a placeholder the writer fills in a Your values box.
+    bundle = {key: str(writer.get(key) or "").strip() for key in ("bucket", "prefix", "region", "pipeline_id")}
+    bundle["prefix"] = bundle["prefix"].strip("/")
+
+    assets = sorted(
+        file.src_uri
+        for file in _files
+        if not file.is_documentation_page() and file.src_uri.startswith(("images/", "files/"))
+    )
 
     data = {
         "folders": [{"path": path, "title": folders[path]} for path in sorted(folders)],
@@ -120,8 +135,10 @@ def on_page_context(context, page, config, nav):
         "platforms": {
             key: {"label": label, "icon": _icon(icon, config)} for key, (label, icon) in PLATFORMS.items()
         },
+        "files": assets,
         "review_months": config.extra.get("review_months", 6),
         "repo": repo,
+        "bundle": bundle,
     }
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     page.content = f'<script type="application/json" id="writer-data">{payload}</script>' + page.content

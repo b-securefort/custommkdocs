@@ -1,0 +1,229 @@
+# Ingest a page bundle from the Write page (docs/write.md).
+#
+# A writer downloads the bundle (.zip) from the Write page, uploads it to
+# s3://<bucket>/incoming/ and runs this pipeline with the object key as
+# bundleKey. The pipeline downloads it, checks it and puts its files in place
+# with tools/ingest_bundle.py, builds the site with --strict, pushes a branch
+# and opens a pull request. Nothing is published until a person approves and
+# merges that pull request. The bundle then moves to processed/, or to failed/
+# if any step failed (the run's log says which and why).
+#
+# ── Setup, once ──────────────────────────────────────────────────────────────
+#
+# 1. Install "AWS Toolkit for Azure DevOps" in the organization
+#    (Organization settings > Extensions > Browse marketplace). It provides
+#    the S3Download@1 and AWSCLI@1 tasks used below.
+#
+# 2. Create an AWS service connection: Project settings > Service connections
+#    > New service connection > AWS. Give it the access key of an IAM user (or
+#    a role to assume) that has only the policy below, and put the
+#    connection's name in awsServiceConnection under variables. On the first
+#    run, permit this pipeline to use it (or: the connection > Security >
+#    Pipeline permissions). Replace <bucket>, and keep the three folders in
+#    step with the prefixes under variables:
+#
+#    {
+#      "Version": "2012-10-17",
+#      "Statement": [
+#        {
+#          "Sid": "FindBundles",
+#          "Effect": "Allow",
+#          "Action": "s3:ListBucket",
+#          "Resource": "arn:aws:s3:::<bucket>",
+#          "Condition": { "StringLike": { "s3:prefix": ["incoming/*", "processed/*", "failed/*"] } }
+#        },
+#        {
+#          "Sid": "ReadAndMoveIncoming",
+#          "Effect": "Allow",
+#          "Action": ["s3:GetObject", "s3:DeleteObject"],
+#          "Resource": "arn:aws:s3:::<bucket>/incoming/*"
+#        },
+#        {
+#          "Sid": "FileProcessedAndFailed",
+#          "Effect": "Allow",
+#          "Action": "s3:PutObject",
+#          "Resource": ["arn:aws:s3:::<bucket>/processed/*", "arn:aws:s3:::<bucket>/failed/*"]
+#        }
+#      ]
+#    }
+#
+#    `aws s3 mv` is a copy then a delete, hence GetObject + DeleteObject on
+#    incoming/ and PutObject on the other two. If the bucket is encrypted with
+#    a KMS key, also allow kms:Decrypt and kms:GenerateDataKey on that key.
+#    Writers need only s3:PutObject on arn:aws:s3:::<bucket>/incoming/*
+#    (plus s3:ListBucket on the bucket to use the S3 console).
+#
+# 3. Let the pipeline push a branch and open a pull request. In Project
+#    settings > Repositories > <the docs repository> > Security, select
+#    "<project> Build Service (<organization>)" and allow:
+#      Contribute, Create branch, Contribute to pull requests.
+#    (If "Limit job authorization scope to current project" is off in the
+#    project's pipeline settings, the identity is "Project Collection Build
+#    Service (<organization>)" instead.) Branch policies on main stay as they
+#    are: the pipeline only pushes ingest/* branches and never merges.
+#
+# 4. Create the pipeline from this file (Pipelines > New pipeline > Azure
+#    Repos Git > the docs repository > Existing Azure Pipelines YAML file),
+#    and name it ingest-bundle. Put its ID (the number after definitionId= in
+#    its address) in mkdocs.yml under extra.writer.pipeline_id, with the same
+#    bucket, region and prefix as below, so the Write page links to it.
+#
+# ── Starting it automatically (not set up) ───────────────────────────────────
+#
+# Writers start runs by hand. To start one whenever a bundle arrives, add an
+# S3 event notification (ObjectCreated, prefix incoming/, suffix .zip) that
+# invokes a small Lambda. The Lambda queues this pipeline through the Azure
+# DevOps REST API, "Runs - Run Pipeline":
+#   POST https://dev.azure.com/<organization>/<project>/_apis/pipelines/<pipeline-id>/runs?api-version=7.1
+#   { "templateParameters": { "bundleKey": "<the object's key>" } }
+# with a PAT that has Build (Read & execute), kept in Secrets Manager. It
+# passes the same bundleKey a writer would type, so nothing below changes and
+# `trigger: none` stays.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: bundleKey
+    displayName: Bundle key (the S3 object key the Write page shows, like incoming/security-rotate-key-20260930-1015.zip)
+    type: string
+
+variables:
+  # The AWS service connection's name (step 2 above). Read when the run is
+  # queued, which is when Azure DevOps checks the pipeline may use it.
+  awsServiceConnection: docs-bundles-aws
+  awsRegion: eu-west-1          # extra.writer.region in mkdocs.yml
+  bucket: my-docs-bundles       # extra.writer.bucket
+  incomingPrefix: incoming/     # extra.writer.prefix, with a / at the end
+  processedPrefix: processed/
+  failedPrefix: failed/
+  targetBranch: main
+  pythonVersion: "3.11"
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self
+    persistCredentials: true    # git push authenticates with System.AccessToken
+    fetchDepth: 1
+
+  - task: UsePythonVersion@0
+    displayName: Use Python $(pythonVersion)
+    inputs:
+      versionSpec: $(pythonVersion)
+
+  # bundleKey is typed by a person: check it before it goes anywhere near a
+  # command, and pass it to scripts only through environment variables.
+  - bash: |
+      set -euo pipefail
+      if [[ ! "$BUNDLE_KEY" =~ ^[A-Za-z0-9._/-]+\.zip$ || "$BUNDLE_KEY" == *..* || "$BUNDLE_KEY" != "$INCOMING"* ]]; then
+        echo "##vso[task.logissue type=error]bundleKey must be the key of a .zip in ${INCOMING}, such as ${INCOMING}security-rotate-key-20260930-1015.zip, using only letters, digits, '.', '-', '_' and '/'."
+        exit 1
+      fi
+      echo "##vso[task.setvariable variable=bundleFolder]$(dirname "$BUNDLE_KEY")"
+      echo "##vso[task.setvariable variable=bundleName]$(basename "$BUNDLE_KEY")"
+      # Start from the tip of the target branch, whichever branch the run was queued on.
+      git fetch --quiet --depth 1 origin "$TARGET_BRANCH"
+      git checkout --quiet --detach FETCH_HEAD
+    displayName: Check the bundle key
+    env:
+      BUNDLE_KEY: ${{ parameters.bundleKey }}
+      INCOMING: $(incomingPrefix)
+      TARGET_BRANCH: $(targetBranch)
+
+  - task: S3Download@1
+    displayName: Download the bundle from S3
+    inputs:
+      awsCredentials: ${{ variables.awsServiceConnection }}
+      regionName: $(awsRegion)
+      bucketName: $(bucket)
+      sourceFolder: $(bundleFolder)
+      globExpressions: $(bundleName)
+      targetFolder: $(Agent.TempDirectory)/bundle
+      flattenFolders: true
+
+  - bash: |
+      set -euo pipefail
+      bundle="$AGENT_TEMPDIRECTORY/bundle/$BUNDLE_NAME"
+      if [[ ! -f "$bundle" ]]; then
+        echo "##vso[task.logissue type=error]Nothing was downloaded: check the key, and that the bundle is in s3://$BUCKET/$BUNDLE_FOLDER/."
+        exit 1
+      fi
+      python tools/ingest_bundle.py "$bundle" --repo-root . \
+        --summary-out "$AGENT_TEMPDIRECTORY/summary.md" \
+        --result-out "$AGENT_TEMPDIRECTORY/result.json"
+    displayName: Check the bundle and put its files in place
+    env:
+      BUNDLE_NAME: $(bundleName)
+      BUNDLE_FOLDER: $(bundleFolder)
+      BUCKET: $(bucket)
+
+  - bash: |
+      set -euo pipefail
+      pip install --quiet -r requirements.txt
+      mkdocs build --strict
+    displayName: Build the site with the page in it
+    env:
+      DISABLE_MKDOCS_2_WARNING: "true"
+
+  # The page title comes from the bundle, so it only reaches the shell as an
+  # environment variable or a quoted "$variable", never as script text.
+  - bash: |
+      set -euo pipefail
+      result="$AGENT_TEMPDIRECTORY/result.json"
+      field() { python -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$result" "$1"; }
+      mode="$(field mode)"
+      title="$( [[ "$mode" == update ]] && echo "Update" || echo "Add" ) $(field title)"
+      branch="ingest/$(field branch_slug)-$BUILD_ID"
+
+      git config user.name "Docs bundle ingest"
+      git config user.email "docs-bundle-ingest@noreply.invalid"
+      git switch --quiet -c "$branch"
+      git add -A docs
+      if git diff --cached --quiet; then
+        echo "##vso[task.logissue type=error]The bundle changes nothing: $(field page) and its files are already like this on $TARGET_BRANCH."
+        exit 1
+      fi
+      git commit --quiet -m "$title" -m "From page bundle $BUNDLE_KEY, pipeline run $BUILD_ID."
+      git push --quiet origin "HEAD:refs/heads/$branch"
+
+      az extension add --name azure-devops --only-show-errors
+      # Azure DevOps takes up to 4,000 characters of description.
+      description="$(head -c 3900 "$AGENT_TEMPDIRECTORY/summary.md")"
+      url="$(az repos pr create \
+        --organization "$ORGANIZATION" --project "$PROJECT" --repository "$REPOSITORY" \
+        --source-branch "$branch" --target-branch "$TARGET_BRANCH" \
+        --title "$title" --description "$description" \
+        --query "join('', [repository.webUrl, '/pullrequest/', to_string(pullRequestId)])" --output tsv)"
+      echo "Opened $url"
+    displayName: Commit, push and open the pull request
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+      BUILD_ID: $(Build.BuildId)
+      ORGANIZATION: $(System.CollectionUri)
+      PROJECT: $(System.TeamProject)
+      REPOSITORY: $(Build.Repository.Name)
+      TARGET_BRANCH: $(targetBranch)
+      BUNDLE_KEY: ${{ parameters.bundleKey }}
+
+  - task: AWSCLI@1
+    displayName: Move the bundle to processed/
+    condition: succeeded()
+    inputs:
+      awsCredentials: ${{ variables.awsServiceConnection }}
+      regionName: $(awsRegion)
+      awsCommand: s3
+      awsSubCommand: mv
+      awsArguments: s3://$(bucket)/$(bundleFolder)/$(bundleName) s3://$(bucket)/$(processedPrefix)$(bundleName)
+
+  # Only once the key has been checked: bundleName is empty until then.
+  - task: AWSCLI@1
+    displayName: Move the bundle to failed/
+    condition: and(failed(), ne(variables['bundleName'], ''))
+    inputs:
+      awsCredentials: ${{ variables.awsServiceConnection }}
+      regionName: $(awsRegion)
+      awsCommand: s3
+      awsSubCommand: mv
+      awsArguments: s3://$(bucket)/$(bundleFolder)/$(bundleName) s3://$(bucket)/$(failedPrefix)$(bundleName)

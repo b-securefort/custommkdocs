@@ -18,6 +18,10 @@ mkdocsstaging.yml                  # staging: inherits mkdocs.yml, sets extra.en
 hooks/
   page_visibility.py               # `unlisted` / `draft` front matter, per environment
   front_matter.py                  # resolves and checks front matter links, images, icons
+  writer.py                        # the site's folders, pages and settings, for the Write page
+tools/ingest_bundle.py             # checks a Write page bundle and puts its files in docs/
+pipelines/ingest-bundle.yml        # Azure DevOps: bundle in S3 → ingest → pull request
+tests/                             # python -m unittest discover tests
 overrides/
   main.html                        # fonts, pre-paint appearance script, banner
   home.html                        # home page layout, filled from docs/index.md front matter
@@ -29,7 +33,7 @@ docs/
   components/
   appearance.md                    # Appearance
   writing-guide/                   # staging only (draft: prod): how the team adds content
-  images/  files/                  # team uploads (no pages, so no tab)
+  images/  files/                  # team uploads, a folder per page (no pages, so no tab)
   stylesheets/
     themes.css                     # the six palettes + mapping onto Material
     components.css                 # chrome, buttons, cards, home page, motion

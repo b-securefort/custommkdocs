@@ -479,6 +479,90 @@
   word-break: break-all;
 }
 
+/* Images and files the page brings (only the ones it uses go in the bundle) */
+.writer-assets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.writer-assets .writer-setup__head,
+.writer-assets .writer-block__help {
+  margin-bottom: 0;
+}
+
+.writer-assets__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.writer-asset {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.5rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-950);
+}
+
+.writer-asset--unused {
+  border-style: dashed;
+}
+
+.writer-asset--unused .writer-asset__thumb {
+  opacity: 0.55;
+}
+
+.writer-asset__thumb {
+  flex: none;
+  width: 2.6rem;
+  height: 1.9rem;
+  object-fit: cover;
+  border: 1px solid var(--base-700);
+  border-radius: 5px;
+  background: var(--base-800);
+}
+
+.writer-asset__thumb--file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-light);
+  font-family: var(--md-code-font-family);
+  font-size: 0.58rem;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.writer-asset__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.md-typeset .writer-asset__name {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writer-asset__meta {
+  color: var(--base-500);
+  font-size: 0.6rem;
+}
+
+/* The link dialog's file picker: the list, then Attach a file. */
+.writer-with-icon > select {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ── Recipes (empty page and New page) ── */
 
 .writer-recipes {
@@ -645,6 +729,14 @@
   margin: 0.6rem 0;
   color: var(--base-400);
   font-size: 0.66rem;
+}
+
+.md-typeset .writer-note--warn {
+  padding: 0.45rem 0.7rem;
+  border-left: 3px solid var(--writer-warn);
+  border-radius: 4px;
+  background: var(--base-950);
+  color: var(--base-200);
 }
 
 /* Preview */

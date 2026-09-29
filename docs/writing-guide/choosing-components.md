@@ -301,4 +301,5 @@ Most pages are one of these shapes. Pick yours and fill it in.
 - [ ] Cloud pages have `applies_to`, `owner` and a `last_reviewed` date from a real run-through.
 - [ ] No subscription IDs, account IDs, tenant names or email addresses in screenshots or examples.
 - [ ] Every placeholder in the code is listed in the page's Your values box.
+- [ ] Every image has alt text saying what it shows, and every attached file is linked from the page.
 - [ ] Checked in one light theme, one dark theme, and with motion set to *Off*, from the [Appearance](../appearance.md) page.

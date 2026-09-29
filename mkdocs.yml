@@ -161,6 +161,13 @@ extra:
     project: ""
     repository: ""
     branch: main
+    # Writers upload the page's bundle (.zip) to s3://<bucket>/<prefix>/ and
+    # run pipelines/ingest-bundle.yml, which opens the pull request. Keep
+    # bucket, region and prefix the same as that pipeline's variables.
+    bucket: ""
+    prefix: incoming   # the pipeline moves bundles on to processed/ or failed/
+    region: ""         # such as eu-west-1
+    pipeline_id: ""    # the number after definitionId= in the pipeline's address
 
 hooks:
   - hooks/page_visibility.py

@@ -1,9 +1,12 @@
 /* Page writer (docs/write.md): build a page from the site's components in the
- * browser, preview it with the site's own styles, and download it as Markdown.
+ * browser, preview it with the site's own styles, and download it as a bundle:
+ * one .zip with the page, its images and files, and a manifest.json saying
+ * where each one goes in the repository (tools/ingest_bundle.py reads it).
  *
  * hooks/writer.py puts the site's folders, pages and icons in the page as
- * JSON. Nothing is sent anywhere: the draft is kept in this browser until the
- * writer downloads it, and "Add to site" says where the file goes.
+ * JSON. Nothing is sent anywhere: the draft is kept in this browser (images
+ * and files in IndexedDB) until the writer downloads it, and "Add to site"
+ * says what to do with the bundle.
  *
  * A page is a list of blocks. Each block type draws its form, writes its
  * Markdown and previews itself with the HTML the build would produce.
@@ -20,8 +23,42 @@
   // The build Material itself loads for pages with diagrams.
   var MERMAID_SRC = "https://unpkg.com/mermaid@11/dist/mermaid.min.js";
   var DRAFT_KEY = "docs.writer.draft";
+  // Where drafts kept images before IndexedDB: read once, moved, removed.
   var IMAGES_KEY = "docs.writer.images";
   var PANEL_KEY = "docs.writer.panel";
+  // Images and files are too big for localStorage.
+  var DB_NAME = "docs.writer";
+  var DB_STORE = "assets";
+
+  /* ── What a page can bring with it (keep in step with tools/ingest_bundle.py) ── */
+
+  var MB = 1024 * 1024;
+  var IMAGE_MAX = 5 * MB;
+  var FILE_MAX = 10 * MB;
+  // The ingest pipeline refuses a bigger bundle.
+  var BUNDLE_MAX = 25 * MB;
+
+  var IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" };
+
+  // Files readers can download: the name used in link text, and the type.
+  var FILE_TYPES = {
+    pdf: ["PDF", "application/pdf"],
+    docx: ["Word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    xlsx: ["Excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    pptx: ["PowerPoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+    vsdx: ["Visio", "application/vnd.ms-visio.drawing"],
+    csv: ["CSV", "text/csv"],
+    json: ["JSON", "application/json"],
+    yaml: ["YAML", "application/yaml"],
+    yml: ["YAML", "application/yaml"],
+    xml: ["XML", "application/xml"],
+    txt: ["text", "text/plain"],
+    zip: ["zip", "application/zip"],
+    drawio: ["draw.io", "application/xml"],
+    bicep: ["Bicep", "text/plain"],
+    tf: ["Terraform", "text/plain"],
+  };
+  var FILE_KINDS = "PDF, Word, Excel, PowerPoint, Visio, CSV, JSON, YAML, XML, text, zip, draw.io, Bicep or Terraform";
 
   /* ── What the site offers (keep in step with the component pages) ── */
 
@@ -228,8 +265,8 @@
       .replace(/-+$/, "");
   }
 
-  function plural(n, word) {
-    return n + " " + word + (n === 1 ? "" : "s");
+  function plural(n, word, many) {
+    return n + " " + (n === 1 ? word : many || word + "s");
   }
 
   function unquote(value) {
@@ -300,7 +337,8 @@
   /* ── State ── */
 
   var data = null; // from hooks/writer.py
-  var state = null; // { meta, blocks, images }
+  // { meta, blocks, images, files }: images and files map a name to a Blob.
+  var state = null;
   var ui = {};
   var nextId = 1;
 
@@ -377,8 +415,30 @@
     }
   }
 
+  // Images and files a page brings live in folders named after the page, so
+  // two pages can't overwrite each other's step1.png:
+  // docs/images/<folder>/<page>/ and docs/files/<folder>/<page>/.
+  function assetDir() {
+    var folder = folderPath();
+    return (folder ? folder + "/" : "") + slug();
+  }
+
+  // kind is "images" or "files". dir "" is the flat docs/images/ that drafts
+  // used before pages had folders of their own.
+  function assetPath(kind, dir, name) {
+    return kind + "/" + (dir ? dir + "/" : "") + name;
+  }
+
+  function assetRel(kind, name) {
+    return relPath(folderPath(), assetPath(kind, assetDir(), name));
+  }
+
   function imageRel(name) {
-    return relPath(folderPath(), "images/" + name);
+    return assetRel("images", name);
+  }
+
+  function fileRel(name) {
+    return assetRel("files", name);
   }
 
   /* ── Block types ── */
@@ -976,7 +1036,7 @@
       return out.join("\n");
     },
     preview: function (b) {
-      var src = b.image ? state.images[b.image] || "" : previewSrc(b.src.trim());
+      var src = b.image ? assetUrl("images", b.image) : previewSrc(b.src.trim());
       var img = '<img src="' + esc(src) + '" alt="' + esc(b.alt) + '"' + (String(b.width).trim() ? ' width="' + parseInt(b.width, 10) + '"' : "") + ">";
       if (!b.frame) return "<p>" + img + "</p>";
       return '<figure class="screenshot">' + img + (b.caption.trim() ? "<figcaption>" + inline(b.caption) + "</figcaption>" : "") + "</figure>";
@@ -985,8 +1045,8 @@
       var source;
       if (b.image) {
         source = h("div", { class: "writer-image" }, [
-          h("img", { class: "writer-image__thumb", src: state.images[b.image] || "", alt: "" }),
-          h("span", { class: "writer-image__name", text: "docs/images/" + b.image }),
+          h("img", { class: "writer-image__thumb", src: assetUrl("images", b.image), alt: "" }),
+          h("span", { class: "writer-image__name", text: "docs/" + assetPath("images", assetDir(), b.image) }),
           button("Replace", "file-upload-outline", "md-button--ghost md-button--sm", function () {
             pickImage(function (name) {
               b.image = name;
@@ -1912,18 +1972,23 @@
     return (classes.length ? ' class="' + classes.join(" ") + '"' : "") + attrs;
   }
 
+  // Images and files this page brings aren't on the site yet: show them from
+  // the browser's copy. Anything else is loaded from the site as usual.
   function previewSrc(src) {
     if (!src || /^(data:|blob:|https?:|\/\/)/i.test(src)) return src;
     var path = joinPath(folderPath(), src);
-    var name = /^images\/([^/]+)$/.exec(path);
-    if (name && state.images[name[1]]) return state.images[name[1]];
+    var found = attachedAt(path);
+    if (found) return assetUrl(found.kind, found.name);
     return src[0] === "/" ? src : BASE + path;
   }
 
   function previewHref(href) {
     if (!href || isExternal(href)) return href;
     var parts = splitHash(href);
-    return siteUrl(joinPath(folderPath(), parts[0]) + parts[1]);
+    var path = joinPath(folderPath(), parts[0]);
+    var found = attachedAt(path);
+    if (found) return assetUrl(found.kind, found.name);
+    return siteUrl(path + parts[1]);
   }
 
   // attr_list, the ui-path hook, and a sanitiser: an opened file is shown
@@ -2230,7 +2295,28 @@
         });
       },
     },
+    {
+      icon: "paperclip",
+      label: "Attach a file to download: " + FILE_KINDS + ", up to " + FILE_MAX / MB + " MB",
+      run: function (area) {
+        pickFile(function (name) {
+          insertFileLink(area, name);
+        });
+      },
+    },
   ];
+
+  function insertFileLink(area, name) {
+    var label = area.value.slice(area.selectionStart, area.selectionEnd).trim() || downloadLabel(name);
+    replaceSelection(area, "[" + label + "](" + fileRel(name) + ")");
+  }
+
+  // "onboarding-checklist.pdf" → "Download onboarding checklist (PDF)"
+  function downloadLabel(name) {
+    var ext = extOf(name);
+    var words = name.slice(0, name.length - ext.length - 1).replace(/[-_]+/g, " ").trim();
+    return "Download " + (words || "the file") + " (" + (FILE_TYPES[ext] ? FILE_TYPES[ext][0] : ext.toUpperCase()) + ")";
+  }
 
   function mdField(obj, key, opts) {
     var area = h("textarea", {
@@ -2264,11 +2350,18 @@
         ? null
         : function (event) {
             var files = event.clipboardData && event.clipboardData.files;
-            if (!files || !files.length || !/^image\//.test(files[0].type)) return;
-            event.preventDefault();
-            addImageFile(files[0], function (name) {
-              replaceSelection(area, "![Describe what the image shows](" + imageRel(name) + ")");
-            });
+            if (!files || !files.length) return;
+            if (/^image\//.test(files[0].type)) {
+              event.preventDefault();
+              addImageFile(files[0], function (name) {
+                replaceSelection(area, "![Describe what the image shows](" + imageRel(name) + ")");
+              });
+            } else if (FILE_TYPES[extOf(files[0].name)]) {
+              event.preventDefault();
+              addAttachment(files[0], function (name) {
+                insertFileLink(area, name);
+              });
+            }
           },
     });
     requestAnimationFrame(function () {
@@ -2360,6 +2453,22 @@
     var text = h("input", { class: "writer-input", value: area.value.slice(start, end), placeholder: "The words readers click" });
     var page = h("input", { class: "writer-input", list: "writer-pages", placeholder: "Start typing a page title" });
     var section = h("input", { class: "writer-input", placeholder: "#reset-your-password" });
+    var file = h("select", { class: "writer-input", "aria-label": "Attached file" });
+    function listFiles(chosen) {
+      var names = Object.keys(state.files).sort();
+      file.innerHTML = "";
+      file.appendChild(h("option", { value: "", text: names.length ? "Pick an attached file" : "No files attached yet" }));
+      names.forEach(function (name) {
+        file.appendChild(h("option", { value: name, text: name }));
+      });
+      file.value = chosen || "";
+    }
+    listFiles();
+    var attach = button("Attach a file", "paperclip", "md-button--ghost md-button--sm", function () {
+      pickFile(function (name) {
+        listFiles(name);
+      });
+    });
     var url = h("input", { class: "writer-input", type: "url", placeholder: "https://status.example.com" });
     var node = dialog(
       "Insert a link",
@@ -2367,6 +2476,7 @@
         field("Link text", text),
         field("A page on this site", page, null, "Links to the .md file, so the build checks it exists."),
         field("Section on that page (optional)", section),
+        field("Or a file to download", h("span", { class: "writer-with-icon" }, [file, attach]), null, FILE_KINDS + ", up to " + FILE_MAX / MB + " MB. It goes in the bundle with the page."),
         field("Or a web address", url),
       ],
       [
@@ -2375,11 +2485,12 @@
           var href = url.value.trim();
           var anchor = section.value.trim().replace(/^#?/, "#");
           if (target) href = relPath(folderPath(), target.src) + (anchor.length > 1 ? anchor : "");
+          else if (file.value) href = fileRel(file.value);
           if (!href) {
             page.focus();
             return;
           }
-          var label = text.value.trim() || (target ? target.title : href);
+          var label = text.value.trim() || (target ? target.title : file.value ? downloadLabel(file.value) : href);
           node.close();
           area.setSelectionRange(start, end);
           replaceSelection(area, "[" + label + "](" + href + ")");
@@ -2389,34 +2500,96 @@
     (text.value ? page : text).focus();
   }
 
-  /* ── Images ── */
+  /* ── Images and files the page brings with it ── */
 
-  function uniqueImageName(name) {
+  function extOf(name) {
+    var m = /\.([a-z0-9]+)$/i.exec(name || "");
+    return m ? m[1].toLowerCase() : "";
+  }
+
+  function mimeOf(kind, name) {
+    var ext = extOf(name);
+    if (kind === "images") return IMAGE_TYPES[ext] || "application/octet-stream";
+    return FILE_TYPES[ext] ? FILE_TYPES[ext][1] : "application/octet-stream";
+  }
+
+  function megabytes(bytes) {
+    return bytes < MB ? Math.max(1, Math.round(bytes / 1024)) + " KB" : (bytes / MB).toFixed(1).replace(/\.0$/, "") + " MB";
+  }
+
+  // Already on the site, in this page's folder (a page opened to change it).
+  function onSite(kind, name) {
+    return (data.files || []).indexOf(assetPath(kind, assetDir(), name)) >= 0;
+  }
+
+  function uniqueName(kind, name) {
     var dot = name.lastIndexOf(".");
     var stem = name.slice(0, dot);
     var ext = name.slice(dot);
     var candidate = name;
     var n = 2;
-    while (state.images[candidate]) candidate = stem + "-" + n++ + ext;
+    while (state[kind][candidate] || onSite(kind, candidate)) candidate = stem + "-" + n++ + ext;
     return candidate;
   }
 
+  // Read the whole file now: a File only points at the disk, and it may have
+  // moved or changed by the time the bundle is made.
+  function bytesOf(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(new Uint8Array(reader.result));
+      };
+      reader.onerror = function () {
+        reject(reader.error);
+      };
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
   function addImageFile(file, done) {
-    if (file.size > 5 * 1024 * 1024) {
-      toast("That image is over 5 MB. Crop it or save it smaller, then try again.");
+    if (file.size > IMAGE_MAX) {
+      toast("That image is over " + IMAGE_MAX / MB + " MB. Crop it or save it smaller, then try again.");
       return;
     }
-    var reader = new FileReader();
-    reader.onload = function () {
-      var ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg").replace(/\+.*/, "");
-      var stem = file.name && !/^image\.\w+$/i.test(file.name) ? slugify(file.name.replace(/\.[^.]+$/, "")) : "";
-      var name = uniqueImageName((stem || slug() + "-screenshot") + "." + ext);
-      state.images[name] = reader.result;
-      saveImages();
-      done(name);
-      changed();
-    };
-    reader.readAsDataURL(file);
+    var ext = (file.type.split("/")[1] || extOf(file.name) || "png").replace("jpeg", "jpg").replace(/\+.*/, "");
+    if (!IMAGE_TYPES[ext]) {
+      toast("Use a PNG, JPEG, GIF, WebP or SVG image.");
+      return;
+    }
+    bytesOf(file).then(
+      function (bytes) {
+        var stem = file.name && !/^image\.\w+$/i.test(file.name) ? slugify(file.name.replace(/\.[^.]+$/, "")) : "";
+        var name = uniqueName("images", (stem || slug() + "-screenshot") + "." + ext);
+        addAsset("images", name, new Blob([bytes], { type: IMAGE_TYPES[ext] }));
+        done(name);
+      },
+      function () {
+        toast("Couldn't read that image. Save it somewhere else and try again.");
+      }
+    );
+  }
+
+  function addAttachment(file, done) {
+    var ext = extOf(file.name);
+    if (!FILE_TYPES[ext]) {
+      toast("Readers can download " + FILE_KINDS + " files. Save it as one of those, or link to where it already lives.");
+      return;
+    }
+    if (file.size > FILE_MAX) {
+      toast("That file is over " + FILE_MAX / MB + " MB. Keep big files somewhere like SharePoint, and link to them there.");
+      return;
+    }
+    bytesOf(file).then(
+      function (bytes) {
+        var name = uniqueName("files", (slugify(file.name.replace(/\.[^.]+$/, "")) || "download") + "." + ext);
+        addAsset("files", name, new Blob([bytes], { type: FILE_TYPES[ext][1] }));
+        done(name);
+      },
+      function () {
+        toast("Couldn't read that file. Save it somewhere else and try again.");
+      }
+    );
   }
 
   function pickImage(done) {
@@ -2430,36 +2603,769 @@
     picker.click();
   }
 
-  function usedImages() {
-    var md = toMarkdown();
-    return Object.keys(state.images).filter(function (name) {
-      return md.indexOf("images/" + name) >= 0;
+  function pickFile(done) {
+    var picker = h("input", {
+      type: "file",
+      accept: Object.keys(FILE_TYPES).map(function (ext) {
+        return "." + ext;
+      }).join(","),
+      onchange: function () {
+        if (picker.files[0]) addAttachment(picker.files[0], done);
+      },
+    });
+    picker.click();
+  }
+
+  function addAsset(kind, name, blob) {
+    state[kind][name] = blob;
+    storeAsset(kind, name, blob);
+    drawAssets(true);
+    changed();
+  }
+
+  function removeAsset(kind, name) {
+    var blob = state[kind][name];
+    delete state[kind][name];
+    unstoreAsset(kind, name);
+    redrawImageBlocks();
+    drawAssets(true);
+    changed();
+    var linked = mentions(toMarkdown(), assetPath(kind, assetDir(), name));
+    toast(name + " removed." + (linked ? " The page still points to it: Checks shows where." : ""), "Undo", function () {
+      addAsset(kind, name, blob);
+      redrawImageBlocks();
     });
   }
 
-  // Links and images are written relative to the page, so moving the page to
-  // another folder rewrites the ones that point at known files.
-  function rebaseLinks(oldFolder, newFolder) {
-    if (oldFolder === newFolder) return;
-    var known = {};
-    data.pages.forEach(function (p) {
-      known[p.src] = true;
+  function renameAsset(kind, from, to) {
+    var blob = state[kind][from];
+    delete state[kind][from];
+    state[kind][to] = blob;
+    var moves = {};
+    moves[assetPath(kind, assetDir(), from)] = assetPath(kind, assetDir(), to);
+    var touched = rewriteRefs(folderPath(), folderPath(), function (target) {
+      return moves[target] || null;
     });
-    Object.keys(state.images).forEach(function (name) {
-      known["images/" + name] = true;
+    if (kind === "images") {
+      state.blocks.forEach(function (b) {
+        if (b.type !== "image" || b.image !== from) return;
+        b.image = to;
+        if (touched.indexOf(b) < 0) touched.push(b);
+      });
+    }
+    touched.forEach(redrawBlock);
+    unstoreAsset(kind, from);
+    storeAsset(kind, to, blob);
+    drawAssets(true);
+    changed();
+    toast("Renamed to " + to + (touched.length ? ", and the page points to the new name." : "."));
+  }
+
+  function openRename(kind, name) {
+    var ext = "." + extOf(name);
+    var stem = h("input", { class: "writer-input", value: name.slice(0, -ext.length) });
+    var node = dialog(
+      "Rename " + name,
+      [field("New name", h("span", { class: "writer-with-suffix" }, [stem, h("span", { text: ext })]), null, "Lowercase words joined by hyphens. Links and images on this page follow the new name.")],
+      [button("Rename", "pencil-outline", "md-button--primary md-button--sm", go)]
+    );
+    stem.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        go();
+      }
     });
+    stem.select();
+    function go() {
+      var next = slugify(stem.value);
+      if (!next) {
+        stem.focus();
+        return;
+      }
+      next += ext;
+      if (next !== name && (state[kind][next] || onSite(kind, next))) {
+        toast("There's already a " + next + ". Pick another name.");
+        stem.focus();
+        return;
+      }
+      node.close();
+      if (next !== name) renameAsset(kind, name, next);
+    }
+  }
+
+  function redrawImageBlocks() {
+    state.blocks.forEach(function (b) {
+      if (b.type === "image" && b.image) redrawBlock(b);
+    });
+  }
+
+  // Object URLs for the preview, made once per image or file.
+  var urls = {};
+  function assetUrl(kind, name) {
+    var blob = state[kind][name];
+    if (!blob) return "";
+    var key = kind + "/" + name;
+    if (!urls[key] || urls[key].blob !== blob) {
+      if (urls[key]) URL.revokeObjectURL(urls[key].url);
+      urls[key] = { blob: blob, url: URL.createObjectURL(blob) };
+    }
+    return urls[key].url;
+  }
+
+  // The image or file of this page's that a docs/ path points at, if any.
+  function attachedAt(path) {
+    var kinds = ["images", "files"];
+    for (var i = 0; i < kinds.length; i++) {
+      var prefix = assetPath(kinds[i], assetDir(), "");
+      var name = path.indexOf(prefix) === 0 ? path.slice(prefix.length) : "";
+      if (name && state[kinds[i]][name]) return { kind: kinds[i], name: name };
+    }
+    return null;
+  }
+
+  // Whether the Markdown points at a docs/ path (and not one that merely
+  // starts the same, like step1.png.bak).
+  function mentions(md, path) {
+    var i = -1;
+    while ((i = md.indexOf(path, i + 1)) >= 0) {
+      if (!/[\w.-]/.test(md.charAt(i + path.length))) return true;
+    }
+    return false;
+  }
+
+  // The images or files the page uses: only these go in the bundle.
+  function usedAssets(kind, md) {
+    md = md || toMarkdown();
+    return Object.keys(state[kind]).filter(function (name) {
+      return mentions(md, assetPath(kind, assetDir(), name));
+    });
+  }
+
+  function hasAssets() {
+    return Object.keys(state.images).length + Object.keys(state.files).length > 0;
+  }
+
+  // Rewrites the relative links and image paths in every block. move gets
+  // each one's path from docs/ and returns where it points now, or null to
+  // leave it. Returns the blocks that changed.
+  function rewriteRefs(fromFolder, toFolder, move) {
     function fix(href) {
       if (!href || isExternal(href)) return href;
       var parts = splitHash(href);
-      var target = joinPath(oldFolder, parts[0]);
-      return known[target] ? relPath(newFolder, target) + parts[1] : href;
+      var dest = move(joinPath(fromFolder, parts[0]));
+      return dest ? relPath(toFolder, dest) + parts[1] : href;
     }
-    walk(state.blocks, function (value, key) {
-      if (key === "link" || key === "src") return fix(value);
-      return value.replace(/(\]\()([^)\s]+)(\))/g, function (all, open, href, close) {
-        return open + fix(href) + close;
+    var touched = [];
+    state.blocks.forEach(function (b) {
+      var before = JSON.stringify(b);
+      walk(b, function (value, key) {
+        if (key === "hint") return value;
+        if (key === "link" || key === "src") return fix(value);
+        return value
+          .replace(/(\]\(\s*)([^)\s]+)/g, function (all, open, href) {
+            return open + fix(href);
+          })
+          .replace(/(\b(?:src|href)=")([^"]+)/g, function (all, open, href) {
+            return open + fix(href);
+          });
+      });
+      if (JSON.stringify(b) !== before) touched.push(b);
+    });
+    return touched;
+  }
+
+  // Links are written relative to the page, and point into the page's own
+  // image and file folders; meta.at is where they were written from. When
+  // the page moves to another folder or gets another file name, this
+  // rewrites the ones that point at known pages, images and files.
+  function syncPaths() {
+    if (!state.assetsLoaded) return;
+    var m = state.meta;
+    var from = m.at || { folder: folderPath(), assets: "" };
+    var to = { folder: folderPath(), assets: assetDir() };
+    m.at = to;
+    if (from.folder === to.folder && from.assets === to.assets) return;
+    var moves = {};
+    data.pages.forEach(function (p) {
+      moves[p.src] = p.src;
+    });
+    (data.files || []).forEach(function (path) {
+      moves[path] = path;
+    });
+    ["images", "files"].forEach(function (kind) {
+      Object.keys(state[kind]).forEach(function (name) {
+        moves[assetPath(kind, from.assets, name)] = assetPath(kind, to.assets, name);
       });
     });
+    rewriteRefs(from.folder, to.folder, function (target) {
+      return moves[target] || null;
+    }).forEach(redrawBlock);
+  }
+
+  /* ── Keeping images and files in this browser (IndexedDB) ── */
+
+  var dbOpen = null;
+  function db() {
+    if (!dbOpen) {
+      dbOpen = new Promise(function (resolve, reject) {
+        try {
+          var request = window.indexedDB.open(DB_NAME, 1);
+          request.onupgradeneeded = function () {
+            request.result.createObjectStore(DB_STORE);
+          };
+          request.onsuccess = function () {
+            resolve(request.result);
+          };
+          request.onerror = function () {
+            reject(request.error);
+          };
+          request.onblocked = function () {
+            reject(new Error("blocked"));
+          };
+        } catch (e) {
+          // No IndexedDB, or blocked (some private windows).
+          reject(e);
+        }
+      });
+    }
+    return dbOpen;
+  }
+
+  // Runs fn(store) in one transaction and resolves with what fn's request
+  // returned, once the transaction is written.
+  function tx(mode, fn) {
+    return db().then(function (conn) {
+      return new Promise(function (resolve, reject) {
+        try {
+          var t = conn.transaction(DB_STORE, mode);
+          var request = fn(t.objectStore(DB_STORE));
+          t.oncomplete = function () {
+            resolve(request ? request.result : undefined);
+          };
+          t.onerror = t.onabort = function () {
+            reject(t.error || new Error("aborted"));
+          };
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+  }
+
+  // whole: the write replaces everything, so success means all is kept.
+  function track(promise, whole) {
+    var mine = state;
+    promise.then(
+      function () {
+        if (whole && state === mine) state.assetsSaved = true;
+        updateStatus();
+      },
+      function () {
+        // Over quota, or no IndexedDB: the images and files only live in
+        // this tab now. The status line and Add to site say so.
+        if (state === mine) state.assetsSaved = false;
+        updateStatus();
+      }
+    );
+  }
+
+  function storeAsset(kind, name, blob) {
+    track(
+      tx("readwrite", function (store) {
+        store.put({ kind: kind, name: name, blob: blob }, kind + "/" + name);
+      }),
+      false
+    );
+  }
+
+  function unstoreAsset(kind, name) {
+    track(
+      tx("readwrite", function (store) {
+        store.delete(kind + "/" + name);
+      }),
+      false
+    );
+  }
+
+  // A new or opened page: its images and files replace the last page's.
+  function storeAllAssets() {
+    var mine = state;
+    var promise = tx("readwrite", function (store) {
+      store.clear();
+      ["images", "files"].forEach(function (kind) {
+        Object.keys(mine[kind]).forEach(function (name) {
+          store.put({ kind: kind, name: name, blob: mine[kind][name] }, kind + "/" + name);
+        });
+      });
+    });
+    track(promise, true);
+    return promise;
+  }
+
+  // Once, when the page loads with a draft: its images and files, plus any
+  // images an older version of this page kept in localStorage.
+  function loadAssets() {
+    var mine = state;
+    function done(rows, stored) {
+      if (state !== mine) return;
+      (rows || []).forEach(function (row) {
+        if (row && (row.kind === "images" || row.kind === "files") && row.blob) mine[row.kind][row.name] = row.blob;
+      });
+      var legacy = legacyImages();
+      Object.keys(legacy).forEach(function (name) {
+        if (!mine.images[name]) mine.images[name] = legacy[name];
+      });
+      mine.assetsLoaded = true;
+      mine.assetsSaved = stored;
+      if (Object.keys(legacy).length && stored) {
+        storeAllAssets().then(function () {
+          write(IMAGES_KEY, null);
+        });
+      }
+      syncPaths();
+      redrawImageBlocks();
+      drawAssets(true);
+      updateStatus();
+      render();
+    }
+    tx("readonly", function (store) {
+      return store.getAll();
+    }).then(
+      function (rows) {
+        done(rows, true);
+      },
+      function () {
+        done([], false);
+      }
+    );
+  }
+
+  function legacyImages() {
+    var out = {};
+    try {
+      var images = JSON.parse(read(IMAGES_KEY) || "{}");
+      Object.keys(images || {}).forEach(function (name) {
+        var blob = dataUrlBlob(images[name]);
+        if (blob) out[name] = blob;
+      });
+    } catch (e) {
+      // Unreadable: nothing to move.
+    }
+    return out;
+  }
+
+  function dataUrlBlob(url) {
+    var m = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(String(url || ""));
+    if (!m) return null;
+    var bytes;
+    if (m[2]) {
+      var raw = atob(m[3]);
+      bytes = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    } else bytes = utf8(decodeURIComponent(m[3]));
+    return new Blob([bytes], { type: m[1] || "application/octet-stream" });
+  }
+
+  /* ── Zip files, written and read here so nothing leaves the browser ──
+     Written uncompressed ("stored"): screenshots, PDFs and Office files are
+     compressed already and the page itself is small, so compressing gains
+     little. That keeps the writer to a CRC and three kinds of header, rather
+     than a vendored library to keep up to date. Reading also takes deflated
+     entries (DecompressionStream), for a bundle someone zipped up again. */
+
+  function utf8(text) {
+    return new TextEncoder().encode(text);
+  }
+
+  function fromUtf8(bytes) {
+    return new TextDecoder().decode(bytes);
+  }
+
+  var CRC_TABLE = null;
+  function crc32(bytes) {
+    if (!CRC_TABLE) {
+      CRC_TABLE = new Uint32Array(256);
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        CRC_TABLE[n] = c >>> 0;
+      }
+    }
+    var crc = 0xffffffff;
+    for (var i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  // entries: [{ name, bytes }]. Returns the .zip as a Blob.
+  function zipStore(entries) {
+    var now = new Date();
+    var time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+    var date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+    var parts = [];
+    var central = [];
+    var offset = 0;
+    var dirSize = 0;
+    entries.forEach(function (entry) {
+      var name = utf8(entry.name);
+      var crc = crc32(entry.bytes);
+      var size = entry.bytes.length;
+      var local = new DataView(new ArrayBuffer(30));
+      local.setUint32(0, 0x04034b50, true);
+      local.setUint16(4, 20, true); // version needed to extract
+      local.setUint16(6, 0x0800, true); // names are UTF-8
+      local.setUint16(8, 0, true); // stored, not compressed
+      local.setUint16(10, time, true);
+      local.setUint16(12, date, true);
+      local.setUint32(14, crc, true);
+      local.setUint32(18, size, true);
+      local.setUint32(22, size, true);
+      local.setUint16(26, name.length, true);
+      parts.push(local, name, entry.bytes);
+      var head = new DataView(new ArrayBuffer(46));
+      head.setUint32(0, 0x02014b50, true);
+      head.setUint16(4, 20, true); // made by MS-DOS: plain files, no Unix modes or links
+      head.setUint16(6, 20, true);
+      head.setUint16(8, 0x0800, true);
+      head.setUint16(12, time, true);
+      head.setUint16(14, date, true);
+      head.setUint32(16, crc, true);
+      head.setUint32(20, size, true);
+      head.setUint32(24, size, true);
+      head.setUint16(28, name.length, true);
+      head.setUint32(42, offset, true);
+      central.push(head, name);
+      offset += 30 + name.length + size;
+      dirSize += 46 + name.length;
+    });
+    var end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true);
+    end.setUint16(8, entries.length, true);
+    end.setUint16(10, entries.length, true);
+    end.setUint32(12, dirSize, true);
+    end.setUint32(16, offset, true);
+    return new Blob(parts.concat(central, [end]), { type: "application/zip" });
+  }
+
+  // Resolves with [{ name, bytes }], checking each entry's CRC.
+  function unzip(bytes) {
+    return Promise.resolve()
+      .then(function () {
+        var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        var end = -1;
+        for (var i = bytes.length - 22; i >= 0 && i >= bytes.length - 22 - 65535; i--) {
+          if (view.getUint32(i, true) === 0x06054b50) {
+            end = i;
+            break;
+          }
+        }
+        if (end < 0) throw new Error("it isn't a zip file");
+        var count = view.getUint16(end + 10, true);
+        var at = view.getUint32(end + 16, true);
+        var entries = [];
+        for (var n = 0; n < count; n++) {
+          if (view.getUint32(at, true) !== 0x02014b50) throw new Error("the zip file is damaged");
+          var nameLength = view.getUint16(at + 28, true);
+          var local = view.getUint32(at + 42, true);
+          var start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+          var entry = {
+            name: fromUtf8(bytes.subarray(at + 46, at + 46 + nameLength)),
+            method: view.getUint16(at + 10, true),
+            crc: view.getUint32(at + 16, true),
+            data: bytes.subarray(start, start + view.getUint32(at + 20, true)),
+          };
+          if (!/\/$/.test(entry.name)) entries.push(entry);
+          at += 46 + nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+        }
+        return Promise.all(entries.map(inflate));
+      });
+  }
+
+  function inflate(entry) {
+    var data;
+    if (entry.method === 0) data = Promise.resolve(entry.data);
+    else if (entry.method === 8 && typeof DecompressionStream !== "undefined") {
+      var stream = new Blob([entry.data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      data = new Response(stream).arrayBuffer().then(function (buffer) {
+        return new Uint8Array(buffer);
+      });
+    } else return Promise.reject(new Error(entry.name + " is compressed in a way this browser can't read"));
+    return data.then(function (out) {
+      if (crc32(out) !== entry.crc) throw new Error(entry.name + " is damaged");
+      return { name: entry.name, bytes: out };
+    });
+  }
+
+  /* ── SHA-256, for the manifest. The browser's own where it has one (it
+     needs https or localhost); this copy where it doesn't. ── */
+
+  var K256 = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+
+  function sha256(bytes) {
+    var subtle = window.crypto && window.crypto.subtle;
+    if (!subtle) return Promise.resolve(sha256Here(bytes));
+    return subtle.digest("SHA-256", bytes).then(
+      function (buffer) {
+        return Array.prototype.map.call(new Uint8Array(buffer), function (b) {
+          return (b < 16 ? "0" : "") + b.toString(16);
+        }).join("");
+      },
+      function () {
+        return sha256Here(bytes);
+      }
+    );
+  }
+
+  function sha256Here(bytes) {
+    function ror(x, n) {
+      return (x >>> n) | (x << (32 - n));
+    }
+    var total = Math.ceil((bytes.length + 9) / 64) * 64;
+    var buf = new Uint8Array(total);
+    buf.set(bytes);
+    buf[bytes.length] = 0x80;
+    var view = new DataView(buf.buffer);
+    view.setUint32(total - 8, Math.floor(bytes.length / 0x20000000), false);
+    view.setUint32(total - 4, (bytes.length * 8) >>> 0, false);
+    var H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    var w = new Int32Array(64);
+    for (var off = 0; off < total; off += 64) {
+      for (var t = 0; t < 16; t++) w[t] = view.getInt32(off + t * 4, false);
+      for (t = 16; t < 64; t++) {
+        var x = w[t - 15];
+        var y = w[t - 2];
+        w[t] = w[t - 16] + (ror(x, 7) ^ ror(x, 18) ^ (x >>> 3)) + w[t - 7] + (ror(y, 17) ^ ror(y, 19) ^ (y >>> 10));
+      }
+      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], k = H[7];
+      for (t = 0; t < 64; t++) {
+        var t1 = (k + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & f) ^ (~e & g)) + K256[t] + w[t]) | 0;
+        var t2 = ((ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        k = g;
+        g = f;
+        f = e;
+        e = (d + t1) | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = (t1 + t2) | 0;
+      }
+      H = [(H[0] + a) | 0, (H[1] + b) | 0, (H[2] + c) | 0, (H[3] + d) | 0, (H[4] + e) | 0, (H[5] + f) | 0, (H[6] + g) | 0, (H[7] + k) | 0];
+    }
+    return H.map(function (v) {
+      return ("0000000" + (v >>> 0).toString(16)).slice(-8);
+    }).join("");
+  }
+
+  /* ── The bundle: page.md, images/, files/ and manifest.json, which
+     tools/ingest_bundle.py reads to put each one in the repository ── */
+
+  function bundleName() {
+    var d = new Date();
+    function two(n) {
+      return (n < 10 ? "0" : "") + n;
+    }
+    var stamp = d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + "-" + two(d.getHours()) + two(d.getMinutes());
+    var folder = folderPath().replace(/\//g, "-");
+    return (folder ? folder + "-" : "") + slug() + "-" + stamp + ".zip";
+  }
+
+  function bundleAssets(md) {
+    var out = [];
+    ["images", "files"].forEach(function (kind) {
+      usedAssets(kind, md)
+        .sort()
+        .forEach(function (name) {
+          out.push({ blob: state[kind][name], src: kind + "/" + name, target: "docs/" + assetPath(kind, assetDir(), name) });
+        });
+    });
+    return out;
+  }
+
+  function bundleSize(md) {
+    return bundleAssets(md).reduce(function (n, asset) {
+      return n + asset.blob.size;
+    }, utf8(md).length);
+  }
+
+  // Changes whenever the bundle would, so Add to site can tell a bundle
+  // downloaded before the last edit.
+  function signature() {
+    var md = toMarkdown();
+    var text = md + bundleAssets(md).map(function (a) {
+      return a.src + ":" + a.blob.size;
+    }).join("|");
+    var hash = 0;
+    for (var i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+    return String(hash);
+  }
+
+  function frontValue(key) {
+    var m = new RegExp("^" + key + ":[ \\t]*(.+)$", "m").exec(state.meta.extraFront || "");
+    return m ? unquote(m[1]) : "";
+  }
+
+  function buildBundle() {
+    syncPaths();
+    var md = toMarkdown();
+    var page = utf8(md);
+    var assets = bundleAssets(md);
+    return Promise.all(
+      assets.map(function (asset) {
+        return bytesOf(asset.blob);
+      })
+    ).then(function (contents) {
+      return Promise.all([sha256(page)].concat(contents.map(sha256))).then(function (hashes) {
+        var manifest = { version: 1, created: new Date().toISOString().replace(/\.\d+Z$/, "Z") };
+        var author = frontValue("author");
+        if (author) manifest.author = author;
+        manifest.mode = state.meta.mode === "update" ? "update" : "create";
+        manifest.page = { src: "page.md", target: filePath(), sha256: hashes[0] };
+        manifest.assets = assets.map(function (asset, i) {
+          return { src: asset.src, target: asset.target, sha256: hashes[i + 1] };
+        });
+        var entries = [
+          { name: "manifest.json", bytes: utf8(JSON.stringify(manifest, null, 2) + "\n") },
+          { name: "page.md", bytes: page },
+        ].concat(
+          assets.map(function (asset, i) {
+            return { name: asset.src, bytes: contents[i] };
+          })
+        );
+        return zipStore(entries);
+      });
+    });
+  }
+
+  function downloadBundle() {
+    if (!hasContent()) {
+      toast("Write something first: the bundle would be empty.");
+      return;
+    }
+    if (!state.assetsLoaded) {
+      toast("Still loading this page's images and files. Try again in a moment.");
+      return;
+    }
+    var name = bundleName();
+    buildBundle().then(
+      function (zip) {
+        offer(zip, name);
+        state.meta.bundle = { name: name, sig: signature() };
+        save();
+        render();
+        toast("Downloaded " + name + ". Add to site says what to do with it.", ui.panel === "publish" ? null : "Add to site", function () {
+          showPanel("publish");
+        });
+      },
+      function (e) {
+        toast("Couldn't make the bundle (" + String((e && e.message) || e) + "). Download the .md and each image and file from Add to site instead.");
+      }
+    );
+  }
+
+  function openBundle(file) {
+    var entries = {};
+    var manifest;
+    bytesOf(file)
+      .then(unzip)
+      .then(function (list) {
+        list.forEach(function (entry) {
+          entries[entry.name] = entry.bytes;
+        });
+        try {
+          manifest = JSON.parse(fromUtf8(entries["manifest.json"] || new Uint8Array(0)));
+        } catch (e) {
+          manifest = null;
+        }
+        if (!manifest || manifest.version !== 1 || !manifest.page || !entries[manifest.page.src]) throw new Error("it has no manifest.json from this page");
+        if (!/^docs\/(?:.+\/)?[^/]+\.md$/.test(String(manifest.page.target))) throw new Error("its manifest doesn't say where the page goes");
+        var assets = Array.isArray(manifest.assets) ? manifest.assets : [];
+        return Promise.all(
+          assets.map(function (asset) {
+            return entries[asset.src] ? sha256(entries[asset.src]) : "";
+          })
+        ).then(function (hashes) {
+          return assets.filter(function (asset, i) {
+            return hashes[i] && hashes[i] === String(asset.sha256).toLowerCase();
+          });
+        });
+      })
+      .then(function (assets) {
+        if (hasContent() && !window.confirm("Replace the page you're writing with the one in " + file.name + "? Download it first if you want to keep it.")) return;
+        var target = /^docs\/(?:(.+)\/)?([^/]+)\.md$/.exec(manifest.page.target);
+        var doc = parseDocument(fromUtf8(entries[manifest.page.src]));
+        nextId = 1;
+        state = {
+          meta: doc.meta,
+          blocks: doc.blocks.map(function (b) {
+            b.id = "b" + nextId++;
+            return b;
+          }),
+          images: {},
+          files: {},
+          assetsLoaded: true,
+          assetsSaved: true,
+        };
+        state.meta.mode = manifest.mode === "update" ? "update" : "new";
+        placePage(target[1] || "", target[2]);
+        var dirs = [];
+        assets.forEach(function (asset) {
+          var kind = /^(images|files)\/[^/]+$/.exec(asset.src);
+          var where = /^docs\/(?:images|files)\/(.+)\/[^/]+$/.exec(asset.target || "");
+          if (!kind) return;
+          var name = asset.src.split("/").pop();
+          state[kind[1]][name] = new Blob([entries[asset.src]], { type: mimeOf(kind[1], name) });
+          if (where) dirs.push(where[1]);
+        });
+        // Where the page's links were written from; syncPaths() moves them
+        // if the bundle was made for another folder.
+        state.meta.at = { folder: folderPath(), assets: dirs[0] || assetDir() };
+        syncPaths();
+        // An image block pointing at one of the bundle's images is that
+        // uploaded image again, with its thumbnail and Replace button.
+        state.blocks.forEach(function (b) {
+          var found = b.type === "image" && b.src && attachedAt(joinPath(folderPath(), b.src.trim()));
+          if (found && found.kind === "images") {
+            b.image = found.name;
+            b.src = "";
+          }
+        });
+        state.meta.bundle = { name: file.name, sig: signature() };
+        storeAllAssets();
+        drawSetup();
+        drawAssets(true);
+        drawBlocks();
+        changed();
+        var skipped = (manifest.assets || []).length - assets.length;
+        var images = Object.keys(state.images).length;
+        var files = Object.keys(state.files).length;
+        toast(
+          "Opened " + manifest.page.target + (images || files ? " with " + [images ? plural(images, "image") : "", files ? plural(files, "file") : ""].filter(Boolean).join(" and ") : "") + "." +
+            (skipped ? " Left out " + plural(skipped, "image or file", "images and files") + " that didn't match the manifest." : "")
+        );
+      })
+      .catch(function (e) {
+        toast("Couldn't open " + file.name + ": " + String((e && e.message) || e) + ".");
+      });
+  }
+
+  // The folder and file name of an opened page or bundle.
+  function placePage(folder, name) {
+    var m = state.meta;
+    var known = data.folders.some(function (f) {
+      return f.path === folder;
+    });
+    m.folder = known ? folder : "__new__";
+    m.newFolder = known ? "" : folder;
+    m.slug = name;
+    m.slugEdited = true;
   }
 
   /* ── Checks: the "Before you publish" list, where code can check it ── */
@@ -2494,6 +3400,35 @@
       }
     });
     return names;
+  }
+
+  // Images and files a block points at under docs/images/ or docs/files/
+  // that neither this page nor the site has. Code is left out: a path in a
+  // code example isn't a link.
+  function missingRefs(b) {
+    if (b.type === "code" || b.type === "output" || b.type === "diagram") return [];
+    var md = TYPES[b.type].md(b).replace(/(`{3,}|~{3,})[\s\S]*?\1|`[^`\n]+`/g, "");
+    var known = {};
+    (data.files || []).forEach(function (path) {
+      known[path] = true;
+    });
+    var out = [];
+    var re = /\]\(\s*<?([^)\s>]+)|\b(?:src|href)="([^"]+)"/g;
+    var m;
+    while ((m = re.exec(md))) {
+      var href = m[1] || m[2];
+      if (isExternal(href)) continue;
+      var path = joinPath(folderPath(), splitHash(href)[0]);
+      var kind = /^(images|files)\//.exec(path);
+      if (!kind || attachedAt(path) || known[path]) continue;
+      try {
+        if (known[decodeURI(path)]) continue;
+      } catch (e) {
+        // A stray % in the path: it's missing, then.
+      }
+      out.push({ kind: kind[1], href: href });
+    }
+    return out;
   }
 
   function runChecks() {
@@ -2595,10 +3530,36 @@
         if (n > 6) add("info", "Six cards at most. Split them into groups under headings.", b.id);
       }
       walk(copy(b), function (value, key) {
-        if (key !== "hint" && /!\[(|Describe what the image shows)\]\(/.test(value)) add("warn", "An image has no alt text. Replace “Describe what the image shows”.", b.id);
+        if (key === "hint") return value;
+        if (/!\[(|Describe what the image shows)\]\(/.test(value)) add("warn", "An image has no alt text. Replace “Describe what the image shows”.", b.id);
+        else if (/<img\b(?![^>]*\balt=)[^>]*>/i.test(value)) add("warn", "An <img> has no alt text. Add alt=\"…\" saying what it shows.", b.id);
         return value;
       });
     });
+
+    var md = toMarkdown();
+    ["images", "files"].forEach(function (kind) {
+      var unused = Object.keys(state[kind]).filter(function (name) {
+        return !mentions(md, assetPath(kind, assetDir(), name));
+      });
+      if (!unused.length) return;
+      if (kind === "files") add("warn", "Nothing links to " + unused.join(", ") + ", so readers can't download it and it's left out of the bundle. Link to it, or remove it under Images and files.");
+      else add("info", "Not shown on the page, so left out of the bundle: " + unused.join(", ") + ".");
+    });
+    live.forEach(function (b) {
+      missingRefs(b).forEach(function (ref) {
+        if (ref.kind === "files") add("warn", "Links to " + ref.href + ", which isn't attached or on the site. Attach it (the paperclip), or fix the link.", b.id);
+        else add("warn", "Shows " + ref.href + ", which isn't uploaded or on the site. Upload it again, or fix the path.", b.id);
+      });
+    });
+    var size = bundleSize(md);
+    if (size > BUNDLE_MAX) add("warn", "The bundle is " + megabytes(size) + ", over the " + BUNDLE_MAX / MB + " MB the pipeline takes. Make screenshots smaller, or link to big files where they already live.");
+
+    var exists = data.pages.some(function (p) {
+      return "docs/" + p.src === filePath();
+    });
+    if (m.mode !== "update" && exists) add("warn", filePath() + " already exists. Give this page another file name, or under Add to site choose “A change to an existing page”.");
+    if (m.mode === "update" && !exists && m.title.trim()) add("info", "There's no " + filePath() + " on the site yet, so this adds a new page.");
 
     var cloudy = codeTexts().some(function (entry) {
       return /(^|\n|`)\s*(az|aws|kubectl|terraform|Connect-AzAccount|New-Az\w+)\s/.test(entry.text);
@@ -2621,12 +3582,15 @@
     root.setAttribute("data-mounted", "");
     root.innerHTML = "";
     ui = { root: root };
-    if (!state) state = loadDraft() || { meta: emptyMeta(), blocks: [], images: loadImages(), imagesSaved: true };
+    if (!state) {
+      state = loadDraft() || { meta: emptyMeta(), blocks: [], images: {}, files: {}, assetsSaved: true };
+      loadAssets();
+    }
 
     root.appendChild(datalists());
     var fileInput = h("input", {
       type: "file",
-      accept: ".md,.markdown,text/markdown",
+      accept: ".md,.markdown,text/markdown,.zip,application/zip",
       hidden: true,
       onchange: function () {
         if (fileInput.files[0]) openFile(fileInput.files[0]);
@@ -2638,20 +3602,21 @@
       button("New page", "file-document-plus-outline", "md-button--ghost md-button--sm", function () {
         openRecipes();
       }),
-      button("Open a .md file", "file-upload-outline", "md-button--ghost md-button--sm", function () {
+      button("Open a .md or bundle", "file-upload-outline", "md-button--ghost md-button--sm", function () {
         fileInput.click();
       }),
       fileInput,
       ui.status,
-      button("Download .md", "download", "md-button--primary md-button--sm writer__download", download),
+      button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm writer__download", downloadBundle),
     ]);
 
     ui.setup = h("section", { class: "writer-card writer-setup", "aria-label": "Page" });
+    ui.assets = h("section", { class: "writer-card writer-assets", "aria-label": "Images and files" });
     ui.blocks = h("div", { class: "writer-blocks" });
     ui.addLast = button("Add a component", "plus", "writer-add-last", function () {
       openInsert(state.blocks.length);
     });
-    ui.editor = h("div", { class: "writer__editor" }, [ui.setup, ui.blocks, ui.addLast]);
+    ui.editor = h("div", { class: "writer__editor" }, [ui.setup, ui.assets, ui.blocks, ui.addLast]);
 
     ui.panels = {};
     ui.tabButtons = {};
@@ -2691,10 +3656,11 @@
       var file = event.dataTransfer && event.dataTransfer.files[0];
       if (!file || event.target.closest("textarea")) return;
       event.preventDefault();
-      if (/\.(md|markdown)$/i.test(file.name)) openFile(file);
+      if (/\.(md|markdown|zip)$/i.test(file.name)) openFile(file);
     });
 
     drawSetup();
+    drawAssets(true);
     drawBlocks();
     showPanel(read(PANEL_KEY) || "preview");
     updateStatus();
@@ -2756,15 +3722,14 @@
         changed();
       },
     });
-    var oldFolder = folderPath();
     var folders = data.folders.map(function (f) {
       return [f.path, f.title + (f.path ? "  —  docs/" + f.path + "/" : "  —  docs/")];
     });
     folders.push(["__new__", "A new folder…"]);
     var folder = select(m, "folder", folders, false, function () {
-      rebaseLinks(oldFolder, folderPath());
-      oldFolder = folderPath();
+      syncPaths();
       drawSetup();
+      drawAssets(true);
       drawBlocks();
     });
     box.appendChild(h("div", { class: "writer-setup__head" }, [h("span", { class: "writer-block__type" }, [icon("file-document-plus-outline"), h("span", { text: "Page" })])]));
@@ -2775,8 +3740,7 @@
         field("New folder name", input(m, "newFolder", {
           placeholder: "billing",
           onchange: function () {
-            rebaseLinks(oldFolder, folderPath());
-            oldFolder = folderPath();
+            syncPaths();
             changed();
           },
         }), "narrow")
@@ -2842,6 +3806,78 @@
     details.appendChild(mdField(m, "extraFront", { label: "Other front matter (YAML, kept as written)", code: true, rows: 1, placeholder: "hide:\n  - toc" }));
     box.appendChild(toggle);
     box.appendChild(details);
+  }
+
+  // The images and files the page brings: where each goes, and whether the
+  // page uses it (only those go in the bundle). Redrawn when that changes.
+  function drawAssets(force) {
+    var box = ui.assets;
+    if (!box) return;
+    var md = toMarkdown();
+    var dir = assetDir();
+    var rows = [];
+    ["images", "files"].forEach(function (kind) {
+      Object.keys(state[kind]).sort().forEach(function (name) {
+        rows.push({ kind: kind, name: name, used: mentions(md, assetPath(kind, dir, name)) });
+      });
+    });
+    var sig = dir + "|" + bundleSize(md) + "|" + rows.map(function (r) {
+      return r.kind + "/" + r.name + (r.used ? "+" : "-");
+    }).join("|");
+    if (!force && sig === ui.assetsSig) return;
+    ui.assetsSig = sig;
+    box.innerHTML = "";
+    box.appendChild(
+      h("div", { class: "writer-setup__head" }, [
+        h("span", { class: "writer-block__type" }, [icon("paperclip"), h("span", { text: "Images and files" })]),
+        h("span", { class: "writer-block__actions" }, [
+          button("Attach a file", "paperclip", "md-button--ghost md-button--sm", function () {
+            pickFile(function (name) {
+              toast("Attached " + name + ". Now link to it from the text: the link button next to it copies a link to paste.");
+            });
+          }),
+        ]),
+      ])
+    );
+    if (!rows.length) {
+      box.appendChild(h("div", { class: "writer-block__help", text: "Nothing yet. Add a screenshot with the Screenshot component or the image button in any text box, or paste one. Attach a file for readers to download with the paperclip." }));
+    }
+    var list = h("div", { class: "writer-assets__list" });
+    rows.forEach(function (r) {
+      var blob = state[r.kind][r.name];
+      list.appendChild(
+        h("div", { class: "writer-asset" + (r.used ? "" : " writer-asset--unused") }, [
+          r.kind === "images"
+            ? h("img", { class: "writer-asset__thumb", src: assetUrl(r.kind, r.name), alt: "" })
+            : h("span", { class: "writer-asset__thumb writer-asset__thumb--file", text: extOf(r.name) }),
+          h("span", { class: "writer-asset__text" }, [
+            h("code", { class: "writer-asset__name", title: "docs/" + assetPath(r.kind, dir, r.name), text: r.name }),
+            h("span", { class: "writer-asset__meta", text: megabytes(blob.size) + (r.used ? "" : " · not on the page, so not in the bundle") }),
+          ]),
+          r.kind === "files"
+            ? iconButton("link-variant", "Copy a link to it, to paste into the text", false, function () {
+                copyText("[" + downloadLabel(r.name) + "](" + fileRel(r.name) + ")", "Link copied. Paste it where readers should download the file.");
+              })
+            : null,
+          iconButton("pencil-outline", "Rename", false, function () {
+            openRename(r.kind, r.name);
+          }),
+          iconButton("trash-can-outline", "Remove", false, function () {
+            removeAsset(r.kind, r.name);
+          }),
+        ])
+      );
+    });
+    if (rows.length) box.appendChild(list);
+    box.appendChild(
+      h("div", {
+        class: "writer-field__hint",
+        text:
+          "Images up to " + IMAGE_MAX / MB + " MB; files for readers to download (" + FILE_KINDS + ") up to " + FILE_MAX / MB + " MB. " +
+          "They go in docs/images/" + dir + "/ and docs/files/" + dir + "/. " +
+          (rows.length ? "The bundle is " + megabytes(bundleSize(md)) + " of the " + BUNDLE_MAX / MB + " MB it can be." : ""),
+      })
+    );
   }
 
   function drawBlocks() {
@@ -3048,12 +4084,14 @@
 
   function startRecipe(recipe) {
     nextId = 1;
-    state = { meta: Object.assign(emptyMeta(), copy(recipe.meta || {})), blocks: [], images: {} };
+    state = { meta: Object.assign(emptyMeta(), copy(recipe.meta || {})), blocks: [], images: {}, files: {}, assetsLoaded: true, assetsSaved: true };
     recipe.blocks.forEach(function (spec) {
       state.blocks.push(makeBlock(spec[0], spec[1]));
     });
-    saveImages();
+    state.meta.at = { folder: folderPath(), assets: assetDir() };
+    storeAllAssets();
     drawSetup();
+    drawAssets(true);
     drawBlocks();
     changed();
     var title = ui.setup.querySelector(".writer-input--title");
@@ -3061,6 +4099,10 @@
   }
 
   function openFile(file) {
+    if (/\.zip$/i.test(file.name)) {
+      openBundle(file);
+      return;
+    }
     var reader = new FileReader();
     reader.onload = function () {
       if (hasContent() && !window.confirm("Replace the page you're writing with " + file.name + "? Download it first if you want to keep it.")) return;
@@ -3073,6 +4115,9 @@
           return b;
         }),
         images: {},
+        files: {},
+        assetsLoaded: true,
+        assetsSaved: true,
       };
       state.meta.mode = "update";
       state.meta.slug = file.name.replace(/\.(md|markdown)$/i, "");
@@ -3081,8 +4126,12 @@
         return p.src.split("/").pop() === file.name;
       });
       if (matches.length === 1) state.meta.folder = dirname(matches[0].src);
-      saveImages();
+      // Its images are already on the site, flat in docs/images/ for older
+      // pages; they stay where they are. New ones go in the page's folders.
+      state.meta.at = { folder: folderPath(), assets: assetDir() };
+      storeAllAssets();
       drawSetup();
+      drawAssets(true);
       drawBlocks();
       changed();
       toast("Opened " + file.name + (matches.length === 1 ? " from docs/" + matches[0].src + "." : ". Check the folder it belongs in."));
@@ -3129,6 +4178,7 @@
   function changed() {
     clearTimeout(timer);
     timer = setTimeout(function () {
+      syncPaths();
       save();
       render();
     }, 180);
@@ -3136,6 +4186,7 @@
 
   function render() {
     if (!ui.root || !ui.root.isConnected) return;
+    drawAssets(false);
     var checks = runChecks();
     var warnings = checks.filter(function (c) {
       return c.level === "warn";
@@ -3190,7 +4241,8 @@
         button("Copy", "content-copy", "md-button--ghost md-button--sm", function () {
           copyText(toMarkdown(), "Markdown copied.");
         }),
-        button("Download .md", "download", "md-button--primary md-button--sm", download),
+        button("Download .md only", "download", "md-button--ghost md-button--sm", download),
+        button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm", downloadBundle),
       ])
     );
     box.appendChild(h("pre", { class: "writer-source language-markdown" }, [h("code", { text: toMarkdown() })]));
@@ -3242,9 +4294,14 @@
     var box = ui.panels.publish;
     var m = state.meta;
     var repo = data.repo || {};
+    var cfg = data.bundle || {};
     var folder = folderPath();
     var name = fileName();
-    var images = usedImages();
+    var md = toMarkdown();
+    var images = usedAssets("images", md).sort();
+    var files = usedAssets("files", md).sort();
+    var imageDir = "docs/" + assetPath("images", assetDir(), "");
+    var fileDir = "docs/" + assetPath("files", assetDir(), "");
     var update = m.mode === "update";
     var branch = repo.branch || "main";
     var org = String(repo.organization || "").replace(/\/+$/, "");
@@ -3252,72 +4309,119 @@
     var ORG = org || "https://dev.azure.com/<organization>";
     var PROJECT = repo.project || "<project>";
     var REPO = repo.repository || "<repository>";
+    var BUCKET = cfg.bucket || "<bucket>";
+    var PREFIX = cfg.prefix || "<prefix>";
+    var REGION = cfg.region || "<region>";
+    var PIPELINE = cfg.pipeline_id || "<pipeline-id>";
     var work = "docs/" + (update ? "update-" : "") + slug();
     var message = (update ? "Update " : "Add ") + (m.title.trim() || slug()).replace(/"/g, "'");
     var docsDir = "docs/" + (folder ? folder + "/" : "");
     var repoUrl = ORG + "/" + (repo.project ? encodeURIComponent(repo.project) : PROJECT) + "/_git/" + (repo.repository ? encodeURIComponent(repo.repository) : REPO);
 
+    // Redrawn as the page changes: keep the tabs the writer picked.
+    var checked = [];
+    box.querySelectorAll("input[type=radio]:checked").forEach(function (node) {
+      checked.push(node.id);
+    });
+    var scroll = box.scrollTop;
     box.innerHTML = "";
     tabSets = 100;
 
-    var mode = h("div", { class: "writer-row" }, [
-      field(
-        "This is",
-        select(m, "mode", [["new", "A new page"], ["update", "A change to an existing page"]], false, function () {
-          renderPublish();
-        }),
-        "grow"
-      ),
-    ]);
-    box.appendChild(mode);
-
-    var files = h("div", { class: "writer-files" }, [
-      fileRow(name, docsDir, "download", function () {
-        download();
-      }),
-    ]);
-    images.forEach(function (image) {
-      files.appendChild(
-        fileRow(image, "docs/images/", "download", function () {
-          var a = h("a", { href: state.images[image], download: image });
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        })
-      );
-    });
-    box.appendChild(h("p", { class: "writer-panel__lead", text: "Download " + (images.length ? "these files" : "the file") + ", then put " + (images.length ? "each one" : "it") + " in the folder shown:" }));
-    box.appendChild(files);
-    if (Object.keys(state.images).length && !state.imagesSaved) box.appendChild(h("p", { class: "writer-note", text: "Images are too big to keep in this browser: download them before you close the page." }));
-
-    var navNote = m.folder === "__new__"
-      ? "A new folder becomes a tab. It also needs an index.md (its landing page) and a line in docs/.nav.yml: see the writing guide, under The menu."
-      : "The page appears at the end of this folder's sidebar. To choose its place, add “- " + name + "” to " + docsDir + ".nav.yml.";
-    if (!update) box.appendChild(h("p", { class: "writer-note", text: navNote }));
+    box.appendChild(
+      h("div", { class: "writer-row" }, [
+        field(
+          "This is",
+          select(m, "mode", [["new", "A new page"], ["update", "A change to an existing page"]], false, function () {
+            renderPublish();
+          }),
+          "grow"
+        ),
+      ])
+    );
 
     var html = "";
-    if (!configured) {
+    var missing = [];
+    if (!org) missing.push(["organization", "Azure DevOps organization (the name in dev.azure.com/…)"]);
+    if (!repo.project) missing.push(["project", "Azure DevOps project"]);
+    if (!repo.repository) missing.push(["repository", "Docs repository name"]);
+    if (!cfg.bucket) missing.push(["bucket", "S3 bucket that takes the bundles"]);
+    if (!cfg.prefix) missing.push(["prefix", "Folder in that bucket, such as <code>incoming</code>"]);
+    if (!cfg.region) missing.push(["region", "AWS Region, such as <code>eu-west-1</code>"]);
+    if (!cfg.pipeline_id) missing.push(["pipeline-id", "The ingest pipeline's number (after <code>definitionId=</code> in its address)"]);
+    if (missing.length) {
       html +=
         '<div class="your-values"><ul>' +
-        (org ? "" : "<li><code>&lt;organization&gt;</code> Azure DevOps organization (the name in dev.azure.com/…)</li>") +
-        (repo.project ? "" : "<li><code>&lt;project&gt;</code> Azure DevOps project</li>") +
-        (repo.repository ? "" : "<li><code>&lt;repository&gt;</code> Docs repository name</li>") +
+        missing.map(function (v) {
+          return "<li><code>&lt;" + v[0] + "&gt;</code> " + v[1] + "</li>";
+        }).join("") +
         "</ul></div>";
     }
+
+    /* Upload the bundle */
+
+    var zip = m.bundle ? m.bundle.name : bundleName();
+    var key = PREFIX + "/" + zip;
+    var stale = m.bundle && m.bundle.sig !== signature();
+    var bucketLink = cfg.bucket && cfg.region ? "https://s3.console.aws.amazon.com/s3/buckets/" + encodeURIComponent(cfg.bucket) + "?region=" + encodeURIComponent(cfg.region) + (cfg.prefix ? "&prefix=" + encodeURIComponent(cfg.prefix + "/") : "") : "";
+    var pipelineLink = org && repo.project ? org + "/" + encodeURIComponent(repo.project) + "/_build" + (cfg.pipeline_id ? "?definitionId=" + encodeURIComponent(cfg.pipeline_id) : "") : "";
+    var contents = [images.length ? plural(images.length, "image") : "", files.length ? plural(files.length, "file") : ""].filter(Boolean).join(" and ");
+    var got = m.bundle
+      ? stale
+        ? '<p class="writer-note writer-note--warn">You\'ve changed the page since you downloaded <code>' + esc(zip) + "</code>. Download it again, and upload the new one.</p>"
+        : '<p class="writer-note">Downloaded as <code>' + esc(zip) + "</code>.</p>"
+      : "";
+    var upload =
+      '<div class="steps"><ol>' +
+      "<li><p><strong>Download the bundle.</strong> It holds the page" + (contents ? ", the " + contents + " it uses," : "") + " and a <code>manifest.json</code> saying where each one goes.</p>" +
+      '<p><button type="button" class="md-button md-button--primary md-button--sm" data-bundle>' + iconHtml("folder-zip-outline") + "<span>Download bundle (.zip)</span></button></p>" + got + "</li>" +
+      "<li><p><strong>Upload it to S3</strong>, into <code>s3://" + esc(BUCKET) + "/" + esc(PREFIX) + "/</code>. " +
+      (bucketLink ? '<a href="' + esc(bucketLink) + '" target="_blank" rel="noopener">Open that folder in the S3 console</a>, select' : "In the S3 console, open the bucket and the folder, then select") +
+      " <strong>Upload</strong>, add the file, and select <strong>Upload</strong> again. Or with the AWS CLI, from PowerShell or a terminal:</p>" +
+      copyable("bash", 'aws s3 cp "$HOME/Downloads/' + zip + '" "s3://' + BUCKET + "/" + key + '" --region ' + REGION) + "</li>" +
+      "<li><p><strong>Run the ingest pipeline.</strong> " +
+      (pipelineLink ? '<a href="' + esc(pipelineLink) + '" target="_blank" rel="noopener">Open ' + (cfg.pipeline_id ? "the pipeline" : "Pipelines") + " in Azure DevOps</a>" + (cfg.pipeline_id ? "" : " and open <strong>ingest-bundle</strong>") : "In Azure DevOps, go to <strong>Pipelines</strong> and open <strong>ingest-bundle</strong>") +
+      ". Select <strong>Run pipeline</strong>, paste the bundle's key into <strong>bundleKey</strong>, and select <strong>Run</strong>. The key:</p>" +
+      copyable("text", key) +
+      "<p>Or start it from a terminal:</p>" +
+      copyable("bash", "az pipelines run --id " + PIPELINE + " --parameters bundleKey=" + key + " --organization " + ORG + ' --project "' + PROJECT + '"') + "</li>" +
+      "<li><p><strong>Review the pull request.</strong> The pipeline checks the bundle, builds the site with the page in it, and opens a pull request from a branch named <code>ingest/" + esc(slug()) + "-…</code>. Once it's approved and merged, the page goes live.</p>" +
+      "<p>If the run fails, its log says why. Fix the page here, then download the bundle again and start over.</p></li>" +
+      "</ol></div>";
+
+    /* Do it by hand */
+
+    var assetGroups = [[images, imageDir, "images"], [files, fileDir, "files"]];
+    var list = '<div class="writer-files">' + fileRowHtml(name, docsDir, "page");
+    assetGroups.forEach(function (group) {
+      group[0].forEach(function (asset) {
+        list += fileRowHtml(asset, group[1], group[2] + "/" + asset);
+      });
+    });
+    list += "</div>";
 
     var moveWin = [];
     var moveNix = [];
     if (m.folder === "__new__") {
-      moveWin.push('New-Item -ItemType Directory -Force "' + docsDir.replace(/\//g, "\\") + '"');
+      moveWin.push('New-Item -ItemType Directory -Force "' + docsDir.replace(/\//g, "\\") + '" | Out-Null');
       moveNix.push("mkdir -p " + docsDir);
     }
-    moveWin.push('Move-Item "$HOME\\Downloads\\' + name + '" "' + (docsDir + name).replace(/\//g, "\\") + '"' + (update ? " -Force" : ""));
-    moveNix.push("mv ~/Downloads/" + name + " " + docsDir + name);
-    images.forEach(function (image) {
-      moveWin.push('Move-Item "$HOME\\Downloads\\' + image + '" "docs\\images\\' + image + '"');
-      moveNix.push("mv ~/Downloads/" + image + " docs/images/" + image);
+    assetGroups.forEach(function (group) {
+      if (!group[0].length) return;
+      moveWin.push('New-Item -ItemType Directory -Force "' + group[1].replace(/\//g, "\\") + '" | Out-Null');
+      moveNix.push("mkdir -p " + group[1]);
     });
-    var add = "git add " + [docsDir + name].concat(images.map(function (i) { return "docs/images/" + i; })).join(" ");
+    var force = update ? " -Force" : "";
+    moveWin.push('Move-Item "$HOME\\Downloads\\' + name + '" "' + (docsDir + name).replace(/\//g, "\\") + '"' + force);
+    moveNix.push("mv ~/Downloads/" + name + " " + docsDir + name);
+    var added = [docsDir + name];
+    assetGroups.forEach(function (group) {
+      group[0].forEach(function (asset) {
+        moveWin.push('Move-Item "$HOME\\Downloads\\' + asset + '" "' + (group[1] + asset).replace(/\//g, "\\") + '"' + force);
+        moveNix.push("mv ~/Downloads/" + asset + " " + group[1] + asset);
+        added.push(group[1] + asset);
+      });
+    });
+    var add = "git add " + added.join(" ");
 
     function steps(move) {
       return [
@@ -3339,7 +4443,7 @@
         ["Windows", copyable("powershell", steps(moveWin))],
         ["macOS / Linux", copyable("bash", steps(moveNix))],
       ]) +
-      "<p>The last command opens the pull request in your browser. Once it's approved and merged, the next build publishes the page. Downloads saved somewhere other than your Downloads folder need that path in the move command.</p>" +
+      "<p>The last command opens the pull request in your browser. Once it's approved and merged, the next build publishes the page. Downloads saved somewhere other than your Downloads folder need that path in the move commands.</p>" +
       "<p>To check the page first, run <code>mkdocs serve</code> in the repository and open <a href=\"http://127.0.0.1:8000\" target=\"_blank\" rel=\"noopener\">http://127.0.0.1:8000</a>.</p>";
 
     var folderLink = configured ? repoUrl + "?path=/" + encodeURI(docsDir.replace(/\/$/, "")) + "&version=GB" + encodeURIComponent(branch) : "";
@@ -3347,41 +4451,85 @@
     var uiPath = function (parts) {
       return '<strong class="ui-path">' + parts.map(function (p) { return '<span class="ui-path__item">' + esc(p) + "</span>"; }).join('<span class="ui-path__sep" aria-hidden="true"></span><span class="sr-only">, </span>') + "</strong>";
     };
+    var assetStep = images.length || files.length
+      ? "<li><p><strong>Add the " + (images.length && files.length ? "images and files" : images.length ? "images" : "files") + "</strong> on the same branch: pick <code>" + esc(work) + "</code> in the branch list, then upload them to " +
+        [images.length ? "<code>" + esc(imageDir) + "</code>" : "", files.length ? "<code>" + esc(fileDir) + "</code>" : ""].filter(Boolean).join(" and ") +
+        " with " + uiPath(["⋮", "Upload file(s)"]) + ". These folders are new, just for this page; if the website won't make them, use the Terminal steps or upload the bundle.</p></li>"
+      : "";
     var website = update
       ? '<div class="steps"><ol>' +
         "<li><p><strong>Open the page's file.</strong> " + (configured ? '<a href="' + esc(fileLink) + '" target="_blank" rel="noopener">Open ' + esc(docsDir + name) + " in Azure DevOps</a>." : "In Azure DevOps, go to " + uiPath(["Repos", "Files"]) + " and open <code>" + esc(docsDir + name) + "</code>.") + "</p></li>" +
         "<li><p><strong>Replace its text.</strong> Select <strong>Edit</strong>, select all the text, and paste the Markdown from the <em>Markdown</em> tab here (its <strong>Copy</strong> button copies it).</p></li>" +
         "<li><p><strong>Commit to a new branch.</strong> Select <strong>Commit</strong>. Under <strong>Branch name</strong>, type <code>" + esc(work) + "</code>, keep <strong>Create a pull request</strong> ticked, and commit.</p></li>" +
-        (images.length ? "<li><p><strong>Add the images</strong> to <code>docs/images/</code> on the same branch: pick <code>" + esc(work) + "</code> in the branch list, open the folder, then <strong>Upload file(s)</strong> from the folder's menu.</p></li>" : "") +
+        assetStep +
         "<li><p><strong>Create the pull request</strong> and ask for a review. Once it's merged, the next build publishes the change.</p></li></ol></div>"
       : '<div class="steps"><ol>' +
         "<li><p><strong>Open the folder.</strong> " + (configured && m.folder !== "__new__" ? '<a href="' + esc(folderLink) + '" target="_blank" rel="noopener">Open ' + esc(docsDir) + " in Azure DevOps</a>." : "In Azure DevOps, go to " + uiPath(["Repos", "Files"]) + " and open <code>" + esc(docsDir) + "</code>" + (m.folder === "__new__" ? " (the terminal steps can create a new folder; the website can't)" : "") + ".") + "</p></li>" +
         "<li><p><strong>Upload the file.</strong> Next to the folder's name, open its menu " + uiPath(["⋮", "Upload file(s)"]) + " and choose <code>" + esc(name) + "</code>.</p></li>" +
         "<li><p><strong>Commit to a new branch.</strong> Under <strong>Branch name</strong>, type <code>" + esc(work) + "</code>, keep <strong>Create a pull request</strong> ticked, and commit.</p></li>" +
-        (images.length ? "<li><p><strong>Add the images</strong> to <code>docs/images/</code> on the same branch: pick <code>" + esc(work) + "</code> in the branch list, open the folder, then " + uiPath(["⋮", "Upload file(s)"]) + ".</p></li>" : "") +
+        assetStep +
         "<li><p><strong>Create the pull request</strong> and ask for a review. Once it's merged, the next build publishes the page.</p></li></ol></div>";
 
+    var byHand =
+      "<p>Download " + (added.length > 1 ? "these files" : "the file") + ", then put " + (added.length > 1 ? "each one" : "it") + " in the folder shown:</p>" +
+      list +
+      tabsHtml([
+        ["Azure DevOps website", website],
+        ["Terminal", terminal],
+      ]);
+
     html += tabsHtml([
-      ["Azure DevOps website", website],
-      ["Terminal", terminal],
+      ["Upload the bundle", upload],
+      ["Do it by hand", byHand],
     ]);
     box.appendChild(h("div", { class: "writer-publish", html: html }));
+
+    if (hasAssets() && state.assetsSaved === false) box.appendChild(h("p", { class: "writer-note writer-note--warn", text: "This browser can't keep the images and files: download the bundle before you close the page." }));
+    var navNote = m.folder === "__new__"
+      ? "A new folder becomes a tab. It also needs an index.md (its landing page) and a line in docs/.nav.yml: see the writing guide, under The menu."
+      : "The page appears at the end of this folder's sidebar. To choose its place, add “- " + name + "” to " + docsDir + ".nav.yml.";
+    if (!update) box.appendChild(h("p", { class: "writer-note", text: navNote }));
+
     box.querySelectorAll(".writer-copy").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var code = btn.parentElement.querySelector("code");
-        copyText(code.textContent, "Commands copied.");
+        copyText(code.textContent, "Copied.");
       });
     });
+    box.querySelectorAll("[data-bundle]").forEach(function (btn) {
+      btn.addEventListener("click", downloadBundle);
+    });
+    box.querySelectorAll("[data-download]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var what = btn.getAttribute("data-download");
+        if (what === "page") download();
+        else {
+          var kind = what.split("/")[0];
+          var asset = what.slice(kind.length + 1);
+          if (state[kind][asset]) offer(state[kind][asset], asset);
+        }
+      });
+    });
+    checked.forEach(function (id) {
+      var node = document.getElementById(id);
+      if (node && box.contains(node)) node.checked = true;
+    });
     if (window.docsComponents) window.docsComponents.mount();
+    box.scrollTop = scroll;
   }
 
-  function fileRow(name, folder, iconName, onclick) {
-    return h("div", { class: "writer-file" }, [
-      h("span", { class: "writer-file__name" }, [h("code", { text: name })]),
-      h("span", { class: "writer-file__arrow", "aria-hidden": "true", text: "→" }),
-      h("span", { class: "writer-file__folder" }, [h("code", { text: folder })]),
-      button("Download", iconName, "md-button--ghost md-button--sm", onclick),
-    ]);
+  function iconHtml(name) {
+    return '<span class="writer-icon" aria-hidden="true">' + ((data && data.ui[name]) || "") + "</span>";
+  }
+
+  // what: "page", or the image or file as "images/<name>" / "files/<name>".
+  function fileRowHtml(name, folder, what) {
+    return (
+      '<div class="writer-file"><span class="writer-file__name"><code>' + esc(name) + "</code></span>" +
+      '<span class="writer-file__arrow" aria-hidden="true">→</span>' +
+      '<span class="writer-file__folder"><code>' + esc(folder) + "</code></span>" +
+      '<button type="button" class="md-button md-button--ghost md-button--sm" data-download="' + esc(what) + '">' + iconHtml("download") + "<span>Download</span></button></div>"
+    );
   }
 
   function copyable(lang, code) {
@@ -3408,20 +4556,26 @@
     }
   }
 
+  // The .md on its own, for the by-hand steps. The bundle has everything.
   function download() {
-    var blob = new Blob([toMarkdown()], { type: "text/markdown;charset=utf-8" });
+    syncPaths();
+    offer(new Blob([toMarkdown()], { type: "text/markdown;charset=utf-8" }), fileName());
+    var md = toMarkdown();
+    var assets = usedAssets("images", md).length + usedAssets("files", md).length;
+    toast("Downloaded " + fileName() + "." + (assets ? " It doesn't include the page's " + plural(assets, "image or file", "images and files") + ": download each from Add to site, or the bundle instead." : " Add to site says where it goes."), ui.panel === "publish" ? null : "Add to site", function () {
+      showPanel("publish");
+    });
+  }
+
+  function offer(blob, name) {
     var url = URL.createObjectURL(blob);
-    var a = h("a", { href: url, download: fileName() });
+    var a = h("a", { href: url, download: name });
     document.body.appendChild(a);
     a.click();
     setTimeout(function () {
       URL.revokeObjectURL(url);
       a.remove();
     }, 1000);
-    var images = usedImages();
-    toast("Downloaded " + fileName() + "." + (images.length ? " Download the " + plural(images.length, "image") + " from Add to site too." : " Add to site says where it goes."), ui.panel === "publish" ? null : "Add to site", function () {
-      showPanel("publish");
-    });
   }
 
   var toastTimer = null;
@@ -3457,20 +4611,6 @@
     updateStatus();
   }
 
-  function saveImages() {
-    var names = Object.keys(state.images);
-    state.imagesSaved = names.length ? write(IMAGES_KEY, JSON.stringify(state.images)) : write(IMAGES_KEY, null);
-  }
-
-  function loadImages() {
-    try {
-      var images = JSON.parse(read(IMAGES_KEY) || "{}");
-      return images && typeof images === "object" ? images : {};
-    } catch (e) {
-      return {};
-    }
-  }
-
   function loadDraft() {
     try {
       var draft = JSON.parse(read(DRAFT_KEY) || "null");
@@ -3482,8 +4622,8 @@
         var n = parseInt(String(b.id).slice(1), 10);
         if (n >= nextId) nextId = n + 1;
       });
-      var images = loadImages();
-      return { meta: Object.assign(emptyMeta(), draft.meta), blocks: blocks, images: images, imagesSaved: true };
+      // Images and files come from IndexedDB afterwards: loadAssets().
+      return { meta: Object.assign(emptyMeta(), draft.meta), blocks: blocks, images: {}, files: {}, assetsLoaded: false, assetsSaved: true };
     } catch (e) {
       return null;
     }
@@ -3491,8 +4631,15 @@
 
   function updateStatus() {
     if (!ui.status) return;
-    ui.status.textContent = ui.saveFailed ? "Can't keep a draft in this browser: download before you leave." : hasContent() ? "Draft kept in this browser only" : "";
-    ui.status.classList.toggle("writer-status--warn", !!ui.saveFailed);
+    var assetsLost = state.assetsSaved === false && hasAssets();
+    ui.status.textContent = ui.saveFailed
+      ? "Can't keep a draft in this browser: download before you leave."
+      : assetsLost
+        ? "Can't keep the images and files in this browser: download the bundle before you leave."
+        : hasContent()
+          ? "Draft kept in this browser only"
+          : "";
+    ui.status.classList.toggle("writer-status--warn", !!ui.saveFailed || assetsLost);
   }
 
   /* ── Mount on every page ── */

@@ -7,7 +7,7 @@ title: Writing guide
 How to add and edit pages on this site. Copy the examples and change the text.
 
 !!! tip "Rather not write Markdown by hand?"
-    The [page writer](../write.md) builds a page in your browser: pick components by what your reader needs, see the page as it will look, and download the finished file with instructions for adding it to the repository.
+    The [page writer](../write.md) builds a page in your browser: pick components by what your reader needs, see the page as it will look, and download it with its images and files as one bundle, which a pipeline turns into a pull request. See [Publish from the page writer](#publish-from-the-page-writer).
 
 ## Add a page
 
@@ -146,26 +146,30 @@ Written from a page in `docs/components/`:
 
 ## Images
 
-1. Save the image in `docs/images/`. Use a lowercase name without spaces, such as `invoice-screen.png`.
+1. Save the image in a folder of the page's own inside `docs/images/`, named after the page's folder and file: for `docs/billing/invoices.md`, that's `docs/images/billing/invoices/`. Use a lowercase name without spaces, such as `invoice-screen.png`. With a folder per page, two pages can't overwrite each other's `step1.png`.
 2. Insert it where you want it, with a short description of what it shows in the square brackets:
 
     ``` markdown
-    ![The invoice screen with the Export button highlighted](../images/invoice-screen.png)
+    ![The invoice screen with the Export button highlighted](../images/billing/invoices/invoice-screen.png)
     ```
 
     The `../` climbs out of the page's folder to reach `images/`. A page directly in `docs/` leaves it out; a page two folders deep needs `../../`.
 
 3. To limit its width, add `{ width="400" }` straight after the closing bracket.
 
+Older pages keep their images directly in `docs/images/`. They work as they are; there's no need to move them.
+
 Readers can click any image to see it full size. For screenshots of a console, add a frame and a caption as shown on the [screenshots](../components/screenshots.md) page. Architecture diagrams are `.drawio` files, inserted the same way: see [architecture diagrams](../components/architecture-diagrams.md).
 
 ## Downloadable files
 
-Put PDFs, spreadsheets and other files in `docs/files/` and link to them like a page:
+Put PDFs, spreadsheets and other files in the page's own folder inside `docs/files/`, named the same way as for images, and link to them like a page:
 
 ``` markdown
-[Download the onboarding checklist (PDF)](../files/onboarding-checklist.pdf)
+[Download the onboarding checklist (PDF)](../files/billing/invoices/onboarding-checklist.pdf)
 ```
+
+Say what the file is and what type it is in the link text. The page writer takes PDF, Word, Excel, PowerPoint, Visio, CSV, JSON, YAML, XML, text, zip, draw.io, Bicep and Terraform files, up to 10 MB each (images up to 5 MB). Keep bigger files where they already live, such as SharePoint, and link to them there.
 
 ## Callouts
 
@@ -251,6 +255,23 @@ Rules that trip people up:
 Anything you write below the settings appears as ordinary Markdown between the highlights and the closing band.
 
 A wrong link, image or icon name stops the build with a message naming it.
+
+## Publish from the page writer
+
+The [page writer](../write.md) packs a page into a **bundle**: one `.zip` holding the page, the images and files it uses, and a `manifest.json` that says where each one goes in the repository. It's made in your browser; nothing is uploaded while you write.
+
+1. On the page writer, select **Download bundle (.zip)**.
+2. Upload the bundle to the bundles folder in S3. **Add to site** shows the folder, a link to it in the S3 console and an `aws s3 cp` command to copy.
+3. Run the **ingest-bundle** pipeline in Azure DevOps, and paste the bundle's key from **Add to site** into **bundleKey**.
+4. The pipeline checks the bundle, puts each file in its place, builds the site with `--strict`, and opens a pull request. Once the pull request is approved and merged, the page goes live.
+
+If the run fails, its log says why. The usual reasons:
+
+- **A new page whose file name is taken.** To change that page, open it on the page writer (**Open a .md or bundle**) and choose *A change to an existing page* under **Add to site**. Otherwise give the new page another file name.
+- **A broken link or image.** The build names the page and the link. **Checks** on the page writer catches most of these before you download.
+- **Too big.** A bundle can be up to 25 MB.
+
+To carry on with a page later, or on another computer, open its bundle on the page writer: the page, its images and its files all come back. **Add to site** also has a *Do it by hand* tab, for adding the files to the repository yourself with git.
 
 ## Check your changes
 
