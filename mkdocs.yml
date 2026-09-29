@@ -136,10 +136,10 @@ extra:
   # Months before a page's `last_reviewed` date counts as overdue, unless
   # its front matter sets `review_every`. See hooks/page_info.py.
   review_months: 6
-  # Footer copyright line (overrides/partials/copyright.html); the date is
-  # the build date. Not `version`: Material reserves that for mike.
+  # Footer copyright line (overrides/partials/copyright.html). Not
+  # `version`: Material reserves that for mike.
   release: 1.0.0
-  built_by: Balaji
+  created_by: Balaji
 
 hooks:
   - hooks/page_visibility.py

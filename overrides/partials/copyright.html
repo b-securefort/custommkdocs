@@ -1,12 +1,11 @@
-{#- Footer copyright: year, version, build date and author, followed by
-    Material's own credit. Version and author come from extra.release and
-    extra.built_by in mkdocs.yml; the year and date are the build's (UTC). -#}
+{#- Footer copyright: year, version and author, followed by Material's own
+    credit. Version and author come from extra.release and extra.created_by
+    in mkdocs.yml; the year is the build's (UTC). -#}
 <div class="md-copyright">
   <div class="md-copyright__highlight">
     &copy; {{ build_date_utc.year }} {{ config.site_name }}
     {%- if config.extra.release %}<span class="md-copyright__sep" aria-hidden="true">&middot;</span>Version {{ config.extra.release }}{% endif %}
-    {{- '' }}<span class="md-copyright__sep" aria-hidden="true">&middot;</span><time datetime="{{ build_date_utc.strftime('%Y-%m-%d') }}">{{ build_date_utc.strftime('%d %b %Y') }}</time>
-    {%- if config.extra.built_by %}<span class="md-copyright__sep" aria-hidden="true">&middot;</span>Built by {{ config.extra.built_by }}{% endif %}
+    {%- if config.extra.created_by %}<span class="md-copyright__sep" aria-hidden="true">&middot;</span>Created by {{ config.extra.created_by }}{% endif %}
   </div>
   {% if not config.extra.generator == false %}
     Made with
