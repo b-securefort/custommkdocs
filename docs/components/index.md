@@ -40,6 +40,52 @@ Styles built for this site, on top of Material.
 
 </div>
 
+## Cloud docs
+
+For Azure and AWS platform documentation.
+
+<div class="grid cards" markdown>
+
+-   :material-form-textbox:{ .lg .middle } __[Your values](your-values.md)__
+
+    ---
+
+    Readers type their resource group once, and every command on the page uses it.
+
+-   :material-chevron-triple-right:{ .lg .middle } __[UI paths](ui-paths.md)__
+
+    ---
+
+    Click paths through the portal or console, with chevrons between the parts.
+
+-   :material-card-account-details-outline:{ .lg .middle } __[Page details](page-details.md)__
+
+    ---
+
+    Which platforms a page covers, who owns it, and whether its review is overdue.
+
+-   :material-sitemap-outline:{ .lg .middle } __[Architecture diagrams](architecture-diagrams.md)__
+
+    ---
+
+    draw.io diagrams with the official Azure and AWS icons.
+
+-   :material-monitor-screenshot:{ .lg .middle } __[Screenshots](screenshots.md)__
+
+    ---
+
+    Framed, captioned, and full size on click.
+
+-   :material-wrench-outline:{ .lg .middle } __[Troubleshooting](troubleshooting.md)__
+
+    ---
+
+    Collapsed entries with the error, its cause and the fix.
+
+</div>
+
+Also for cloud pages: [name anatomy](name-anatomy.md) for naming standards, [glossary tooltips](glossary.md) for abbreviations, [cloud callouts](admonitions.md#cloud-callouts) for permissions, cost, security and preview features, and [command output](code-blocks.md#command-output) blocks.
+
 ## Markdown
 
 Standard Material for MkDocs elements, styled to match: [admonitions](admonitions.md), [code blocks](code-blocks.md), [content tabs](content-tabs.md), [tables](tables.md), [diagrams](diagrams.md) and [text formatting](formatting.md).

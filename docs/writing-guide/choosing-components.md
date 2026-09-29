@@ -1,7 +1,3 @@
----
-draft: prod
----
-
 # Choosing components
 
 Every component on this site pulls the eye, and most of them move: cards, callouts and timeline entries fade in as the reader scrolls. A page reads best when most of it is plain text and each component appears only where it does a job the text can't. Choose a component for what the reader is trying to do, not for how it looks.
@@ -21,6 +17,16 @@ Every component on this site pulls the eye, and most of them move: cards, callou
 | Know whether something is ready to use     | A [badge](../components/badges.md)                                  | "(beta)" in brackets |
 | See how parts connect or a decision flows  | A [diagram](../components/diagrams.md)                              | A paragraph describing the arrows |
 | Copy something into a terminal or file     | A [code block](../components/code-blocks.md)                        | Inline `code` |
+| Run a command with their own names and IDs | Placeholders and a [Your values](../components/your-values.md) box   | "Replace MY_RG with your resource group" |
+| Find something in a console                | A [UI path](../components/ui-paths.md)                              | "Go to Resource groups, then click Create" |
+| Know they have the access a task needs     | A `permissions` [callout](../components/admonitions.md#cloud-callouts) before the steps | Finding out at step 6 |
+| Know a step costs money                    | A `cost` [callout](../components/admonitions.md#cloud-callouts)     | A note at the end |
+| Know whether a page applies to them, and is current | [Page details](../components/page-details.md) in the front matter | "Last updated" in the text |
+| See how cloud services fit together        | An [architecture diagram](../components/architecture-diagrams.md)   | A screenshot of a slide |
+| Check they're in the right place           | A [screenshot](../components/screenshots.md)                        | A screenshot instead of the instructions |
+| Check a command worked                     | A [command output](../components/code-blocks.md#command-output) block | Output pasted into the command's block |
+| Fix an error they've hit                   | A [troubleshooting](../components/troubleshooting.md) entry         | A FAQ written as prose |
+| Build or decode a resource name            | A [name anatomy](../components/name-anatomy.md)                     | A paragraph listing the parts |
 
 When nothing in the table fits, write a paragraph. It's always an option, and usually the best one.
 
@@ -222,6 +228,20 @@ A Mermaid diagram earns its place when relationships are easier to see than to r
 | `[^1]`                          | Footnotes: sources, and asides that would break up a sentence |
 | A term, then `:   meaning`      | A glossary (a definition list) |
 
+## Cloud docs
+
+The components for Azure and AWS pages, and when each one earns its place.
+
+- **Page details on every how-to and reference page.** Set `applies_to`, `owner` and `last_reviewed` in the front matter. Leave them off landing pages.
+- **A permissions callout before the first step**, naming the role and the scope: "Contributor on the resource group". Add a `cost` callout next to it when the steps create anything billable.
+- **One Your values box per page, before the first command**, listing only the placeholders that page uses. Use the [standard names](../components/your-values.md#use-the-same-names-everywhere) so values carry across pages, and never make a placeholder for a secret.
+- **Portal, CLI, IaC as content tabs.** Keep the tab labels identical everywhere so a reader's pick sticks: *Portal*, *Azure CLI*, *PowerShell*, *Bicep*, *Terraform* for Azure; *Console*, *AWS CLI*, *CloudFormation*, *Terraform* for AWS. In the Portal tab, write each step with a UI path.
+- **Screenshots confirm, they don't instruct.** Every step is in the text; a screenshot shows the reader they're in the right place. Hide IDs and names before saving one.
+- **Show the output that proves it worked**, in an output block straight after the command, and say which parts will differ.
+- **Glossary, not definitions in every page.** Add an abbreviation to `includes/abbreviations.md` once, rather than spelling it out on each page.
+- **A `security` callout is for security guidance**, like network exposure or secrets. `danger` stays for data loss and things that can't be undone.
+- **`preview` callouts pair with a Preview badge** in the heading, and pages about preview features set `review_every: 3`.
+
 ## Page recipes
 
 Most pages are one of these shapes. Pick yours and fill it in.
@@ -234,6 +254,17 @@ Most pages are one of these shapes. Pick yours and fill it in.
     4. A `success` callout saying what they should see now.
     5. Troubleshooting in collapsed `???` callouts.
     6. One primary button, or a few cards, for what to do next.
+
+=== "Cloud how-to"
+
+    1. Front matter with `applies_to`, `owner` and `last_reviewed`.
+    2. A sentence saying what the reader will have at the end.
+    3. A `permissions` callout naming the role and scope, and a `cost` callout if anything billable is created.
+    4. A Your values box with the placeholders the page uses.
+    5. The procedure as [steps](../components/steps.md), with Portal / CLI / IaC content tabs where the methods differ, a UI path for each portal step, and a code block for each command.
+    6. An output block, or a `success` callout, showing what they should see now.
+    7. An architecture diagram, if the page builds more than two or three resources.
+    8. Troubleshooting entries at the end, collapsed.
 
 === "Section landing"
 
@@ -267,4 +298,7 @@ Most pages are one of these shapes. Pick yours and fill it in.
 - [ ] No two callouts back to back.
 - [ ] Badge words and colours match the [badges table](#badges).
 - [ ] Tab labels match the ones used on other pages.
+- [ ] Cloud pages have `applies_to`, `owner` and a `last_reviewed` date from a real run-through.
+- [ ] No subscription IDs, account IDs, tenant names or email addresses in screenshots or examples.
+- [ ] Every placeholder in the code is listed in the page's Your values box.
 - [ ] Checked in one light theme, one dark theme, and with motion set to *Off*, from the [Appearance](../themes.md) page.

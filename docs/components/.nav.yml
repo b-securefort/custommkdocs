@@ -8,6 +8,15 @@ nav:
       - cards.md
       - timeline.md
       - steps.md
+  - Cloud docs:
+      - your-values.md
+      - ui-paths.md
+      - page-details.md
+      - architecture-diagrams.md
+      - screenshots.md
+      - troubleshooting.md
+      - name-anatomy.md
+      - glossary.md
   - Markdown:
       - admonitions.md
       - code-blocks.md

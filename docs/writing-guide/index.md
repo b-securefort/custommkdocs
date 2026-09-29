@@ -1,14 +1,10 @@
 ---
 title: Writing guide
-draft: prod
 ---
 
 # Writing guide
 
 How to add and edit pages on this site. Copy the examples and change the text.
-
-!!! info "This page is only on staging"
-    It's never published to the production site that readers use. It uses the `draft: prod` setting described [below](#only-on-staging-or-only-on-production).
 
 ## Add a page
 
@@ -157,6 +153,8 @@ Written from a page in `docs/components/`:
     The `../` climbs out of the page's folder to reach `images/`. A page directly in `docs/` leaves it out; a page two folders deep needs `../../`.
 
 3. To limit its width, add `{ width="400" }` straight after the closing bracket.
+
+Readers can click any image to see it full size. For screenshots of a console, add a frame and a caption as shown on the [screenshots](../components/screenshots.md) page. Architecture diagrams are `.drawio` files, inserted the same way: see [architecture diagrams](../components/architecture-diagrams.md).
 
 ## Downloadable files
 
