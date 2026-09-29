@@ -1,0 +1,593 @@
+/* ── Cloud docs components ──
+   Built for platform documentation (Azure, AWS): callouts for permissions and
+   cost, click paths, fill-in values, page details, name anatomy, command
+   output, diagrams and screenshots. Like components.css, everything reads the
+   theme tokens from themes.css and the motion scale from components.css.
+
+   hooks/components.py and hooks/page_info.py write most of the markup at
+   build time; javascripts/components.js adds the interactive parts. */
+
+/* Fixed hues for things that need telling apart but carry no theme meaning
+   (callout types, name segments). The deep set is for light themes and the
+   bright set for dark ones, so each reads as a stripe or icon on its ground. */
+:root,
+[data-theme] {
+  --hue-blue: #2563eb;
+  --hue-orange: #c2410c;
+  --hue-green: #15803d;
+  --hue-violet: #6d28d9;
+  --hue-pink: #be185d;
+  --hue-teal: #0f766e;
+  --hue-rose: #be123c;
+}
+
+[data-theme="dark"],
+[data-theme="midnight"],
+[data-theme="meadow-dark"] {
+  --hue-blue: #60a5fa;
+  --hue-orange: #fb923c;
+  --hue-green: #4ade80;
+  --hue-violet: #a78bfa;
+  --hue-pink: #f472b6;
+  --hue-teal: #2dd4bf;
+  --hue-rose: #fb7185;
+}
+
+/* ── Cloud callouts: permissions, cost, security, preview, troubleshoot ──
+   Custom admonition types, registered the way Material documents: an icon
+   variable, then the edge, title tint and icon colour. */
+:root {
+  --md-admonition-icon--permissions: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5zm0 2.18 7 3.12v4.92c0 1.7-.5 3.43-1.35 4.95C16 14.94 13.26 14.5 12 14.5s-4 .44-5.65 1.67C5.5 14.65 5 12.92 5 11.22V6.3zM12 6a3.5 3.5 0 0 0-3.5 3.5A3.5 3.5 0 0 0 12 13a3.5 3.5 0 0 0 3.5-3.5A3.5 3.5 0 0 0 12 6m0 2a1.5 1.5 0 0 1 1.5 1.5A1.5 1.5 0 0 1 12 11a1.5 1.5 0 0 1-1.5-1.5A1.5 1.5 0 0 1 12 8m0 8.5c1.57 0 3.64.61 4.53 1.34C15.29 19.38 13.7 20.55 12 21c-1.7-.45-3.29-1.62-4.53-3.16.9-.73 2.96-1.34 4.53-1.34"/></svg>');
+  --md-admonition-icon--cost: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 6h18v12H5zm9 3a3 3 0 0 1 3 3 3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3M9 8a2 2 0 0 1-2 2v4a2 2 0 0 1 2 2h10a2 2 0 0 1 2-2v-4a2 2 0 0 1-2-2zm-8 2h2v10h16v2H1z"/></svg>');
+  --md-admonition-icon--security: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 11c0 5.55-3.84 10.74-9 12-5.16-1.26-9-6.45-9-12V5l9-4 9 4zm-9 10c3.75-1 7-5.46 7-9.78V6.3l-7-3.12L5 6.3v4.92C5 15.54 8.25 20 12 21m2.8-10V9.5C14.8 8.1 13.4 7 12 7S9.2 8.1 9.2 9.5V11c-.6 0-1.2.6-1.2 1.2v3.5c0 .7.6 1.3 1.2 1.3h5.5c.7 0 1.3-.6 1.3-1.2v-3.5c0-.7-.6-1.3-1.2-1.3m-1.3 0h-3V9.5c0-.8.7-1.3 1.5-1.3s1.5.5 1.5 1.3z"/></svg>');
+  --md-admonition-icon--preview: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1c0-.21-.07-.41-.18-.57L13 8.35V4h-2v4.35L5.18 18.43c-.11.16-.18.36-.18.57m1 3a3 3 0 0 1-3-3c0-.6.18-1.16.5-1.63L9 7.81V6a1 1 0 0 1-1-1V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1v1.81l5.5 9.56c.32.47.5 1.03.5 1.63a3 3 0 0 1-3 3zm7-6 1.34-1.34L16.27 18H7.73l2.66-4.61zm-.5-4a.5.5 0 0 1 .5.5.5.5 0 0 1-.5.5.5.5 0 0 1-.5-.5.5.5 0 0 1 .5-.5"/></svg>');
+  --md-admonition-icon--troubleshoot: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m22.61 19-9.08-9.09c.93-2.34.47-5.1-1.44-7C9.79.61 6.21.4 3.66 2.26L7.5 6.11 6.08 7.5 2.25 3.69C.39 6.23.6 9.82 2.9 12.11c1.86 1.86 4.57 2.35 6.89 1.48l9.11 9.11c.39.39 1.02.39 1.41 0l2.3-2.3c.39-.4.39-1.01 0-1.4m-3 1.59-9.46-9.46c-.61.45-1.29.72-2 .82-1.36.2-2.79-.21-3.83-1.25C3.37 9.76 2.93 8.5 3 7.26l3.09 3.09 4.24-4.24L7.24 3c1.26-.05 2.49.39 3.44 1.33a4.47 4.47 0 0 1 1.24 3.96 4.35 4.35 0 0 1-.88 1.96l9.46 9.45z"/></svg>');
+  --icon-chevron-right: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.59 16.58 13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>');
+}
+
+.md-typeset .permissions  { --callout: var(--hue-blue); }
+.md-typeset .cost         { --callout: var(--hue-teal); }
+.md-typeset .security     { --callout: var(--hue-rose); }
+.md-typeset .preview      { --callout: var(--warning); }
+.md-typeset .troubleshoot { --callout: var(--hue-violet); }
+
+/* Left edge only: components.css keeps the other three sides neutral. */
+.md-typeset :is(.admonition, details):is(.permissions, .cost, .security, .preview, .troubleshoot) {
+  border-left-color: var(--callout);
+}
+
+.md-typeset :is(.permissions, .cost, .security, .preview, .troubleshoot) > :is(.admonition-title, summary) {
+  background-color: color-mix(in srgb, var(--callout) 10%, transparent);
+}
+
+.md-typeset :is(.permissions, .cost, .security, .preview, .troubleshoot) > :is(.admonition-title, summary)::before {
+  background-color: var(--callout);
+}
+
+.md-typeset .permissions > :is(.admonition-title, summary)::before {
+  -webkit-mask-image: var(--md-admonition-icon--permissions);
+  mask-image: var(--md-admonition-icon--permissions);
+}
+
+.md-typeset .cost > :is(.admonition-title, summary)::before {
+  -webkit-mask-image: var(--md-admonition-icon--cost);
+  mask-image: var(--md-admonition-icon--cost);
+}
+
+.md-typeset .security > :is(.admonition-title, summary)::before {
+  -webkit-mask-image: var(--md-admonition-icon--security);
+  mask-image: var(--md-admonition-icon--security);
+}
+
+.md-typeset .preview > :is(.admonition-title, summary)::before {
+  -webkit-mask-image: var(--md-admonition-icon--preview);
+  mask-image: var(--md-admonition-icon--preview);
+}
+
+.md-typeset .troubleshoot > :is(.admonition-title, summary)::before {
+  -webkit-mask-image: var(--md-admonition-icon--troubleshoot);
+  mask-image: var(--md-admonition-icon--troubleshoot);
+}
+
+/* Troubleshooting entries: a definition list of Symptom / Cause / Fix,
+   labels in a narrow column on the left. */
+.md-typeset .troubleshoot > dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.6rem 1.1rem;
+  margin: 0.9em 0;
+}
+
+.md-typeset .troubleshoot > dl > dt {
+  margin: 0;
+  padding-top: 0.25em;
+  color: var(--callout);
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.md-typeset .troubleshoot > dl > dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.md-typeset .troubleshoot > dl > dd > :first-child {
+  margin-top: 0;
+}
+
+.md-typeset .troubleshoot > dl > dd > :last-child {
+  margin-bottom: 0;
+}
+
+@media screen and (max-width: 30em) {
+  .md-typeset .troubleshoot > dl {
+    grid-template-columns: 1fr;
+    row-gap: 0.2rem;
+  }
+
+  .md-typeset .troubleshoot > dl > dd {
+    margin-bottom: 0.6rem;
+  }
+}
+
+/* ── UI paths: **Home > Resource groups > Create**{ .ui-path } ──
+   hooks/components.py splits the parts; the chevrons are CSS masks. */
+.md-typeset .ui-path {
+  color: var(--base-100);
+  font-weight: 620;
+}
+
+.md-typeset .ui-path__item {
+  white-space: nowrap;
+}
+
+.md-typeset .ui-path__sep {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 0.05em;
+  background-color: var(--base-500);
+  vertical-align: -0.2em;
+  -webkit-mask: var(--icon-chevron-right) center / contain no-repeat;
+  mask: var(--icon-chevron-right) center / contain no-repeat;
+}
+
+/* ── Your values: fill-in placeholders ──
+   Authored as a list of `<placeholder>` codes; components.js turns it into a
+   form and every matching <placeholder> in the page's code into a .ph span. */
+.md-typeset .your-values {
+  margin: 1.6em 0;
+  padding: 0.9rem 1rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--base-700));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--base-900));
+}
+
+/* Before the script runs, or without it: a plain legend of placeholders. */
+.md-typeset .your-values > ul {
+  margin: 0;
+}
+
+.md-typeset .your-values__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.md-typeset .your-values__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  color: var(--base-100);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.md-typeset .your-values__title svg {
+  width: 1.1em;
+  height: 1.1em;
+  fill: var(--accent-light);
+}
+
+.md-typeset .your-values__note {
+  flex: 1 1 14rem;
+  color: var(--base-400);
+  font-size: 0.62rem;
+}
+
+.md-typeset .your-values__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.7rem 1rem;
+}
+
+.md-typeset .your-values__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.md-typeset .your-values__label {
+  color: var(--base-300);
+  font-size: 0.62rem;
+  font-weight: 560;
+}
+
+.md-typeset .your-values__label code {
+  font-size: 0.9em;
+}
+
+.md-typeset .your-values__input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.45em 0.65em;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  background: var(--base-900);
+  color: var(--base-100);
+  font-family: var(--md-code-font-family);
+  font-size: 0.64rem;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.md-typeset .your-values__input::placeholder {
+  color: var(--base-500);
+  opacity: 1;
+}
+
+.md-typeset .your-values__input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* A placeholder inside code. Unfilled: dashed underline, so it reads as
+   "change this". Filled: the reader's value, still tinted so they can see
+   which parts of the command came from them. */
+.md-typeset .ph {
+  padding: 0 0.15em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-light);
+  font-style: italic;
+  text-decoration: underline dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  text-underline-offset: 0.25em;
+  transition: background-color 0.2s;
+}
+
+.md-typeset .ph--filled {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  font-style: normal;
+  text-decoration: none;
+}
+
+/* ── Command output: ``` { .text .output } ──
+   Quieter than a command: no copy button (the hook adds .no-copy), a dashed
+   edge, and an "Output" tag unless the block has a title of its own. */
+.md-typeset .output {
+  position: relative;
+}
+
+.md-typeset .output pre > code {
+  border-style: dashed;
+  background: var(--base-950);
+  color: var(--base-300);
+}
+
+.md-typeset .output span.filename {
+  border-style: dashed;
+  color: var(--base-400);
+}
+
+.md-typeset .output:not(:has(.filename))::before {
+  content: "Output";
+  position: absolute;
+  top: 0.6em;
+  right: 0.9em;
+  z-index: 1;
+  color: var(--base-500);
+  font-size: 0.55rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* ── Page details strip (hooks/page_info.py) ── */
+.md-typeset .page-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.4rem;
+  margin: -0.4rem 0 1.6rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--base-700);
+  color: var(--base-300);
+  font-size: 0.64rem;
+}
+
+.md-typeset .page-info__item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.md-typeset .page-info__key {
+  color: var(--base-500);
+  font-size: 0.92em;
+  font-weight: 620;
+}
+
+.md-typeset .platform {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.12em 0.65em 0.12em 0.45em;
+  border: 1px solid var(--base-700);
+  border-radius: 999px;
+  background: var(--base-800);
+  color: var(--base-200);
+  font-weight: 620;
+  line-height: 1.5;
+}
+
+.md-typeset .platform svg {
+  width: 1.15em;
+  height: 1.15em;
+  fill: currentColor;
+}
+
+/* components.js flags the review as overdue against the reader's clock. */
+.md-typeset .page-info__review.is-overdue {
+  padding: 0.12em 0.65em;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--base-900));
+  color: var(--warning);
+  font-weight: 620;
+}
+
+.md-typeset .page-info__review.is-overdue .page-info__key {
+  color: inherit;
+}
+
+/* ── Name anatomy ──
+   hooks/components.py splits the name and numbers each part (data-seg) to
+   match its term in the legend. Hovering either one highlights the pair. */
+.md-typeset .anatomy {
+  margin: 1.6em 0;
+  padding: 1.1rem 1.1rem 0.9rem;
+  border: 1px solid var(--base-700);
+  border-radius: 14px;
+  background: var(--base-900);
+}
+
+.md-typeset .anatomy [data-seg="1"] { --seg: var(--hue-blue); }
+.md-typeset .anatomy [data-seg="2"] { --seg: var(--hue-orange); }
+.md-typeset .anatomy [data-seg="3"] { --seg: var(--hue-green); }
+.md-typeset .anatomy [data-seg="4"] { --seg: var(--hue-violet); }
+.md-typeset .anatomy [data-seg="5"] { --seg: var(--hue-pink); }
+.md-typeset .anatomy [data-seg="6"] { --seg: var(--hue-teal); }
+
+.md-typeset .anatomy__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  row-gap: 0.6rem;
+  margin: 0.2rem 0 1.1rem;
+  font-family: var(--md-code-font-family);
+  font-size: 1rem;
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.md-typeset .anatomy__seg {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  transition: opacity 0.2s;
+}
+
+.md-typeset .anatomy__value {
+  padding: 0.12em 0.3em;
+  border-bottom: 3px solid var(--seg, var(--base-600));
+  border-radius: 6px 6px 2px 2px;
+  background: color-mix(in srgb, var(--seg, var(--base-600)) 14%, transparent);
+  color: var(--base-100);
+  transition:
+    background-color 0.2s,
+    transform 0.2s var(--ease-out);
+}
+
+.md-typeset .anatomy__label {
+  margin-top: 0.4rem;
+  color: var(--base-400);
+  font-family: var(--md-text-font-family);
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.md-typeset .anatomy__sep {
+  padding: 0.12em 0.08em;
+  color: var(--base-500);
+}
+
+.md-typeset .anatomy > dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 1rem;
+  margin: 0;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--base-700);
+}
+
+.md-typeset .anatomy > dl > dt {
+  align-self: start;
+  justify-self: start;
+  margin: 0;
+  padding: 0.1em 0.5em;
+  border-left: 3px solid var(--seg, var(--base-600));
+  border-radius: 2px 6px 6px 2px;
+  background: color-mix(in srgb, var(--seg, var(--base-600)) 14%, transparent);
+  color: var(--base-100);
+  font-family: var(--md-code-font-family);
+  font-size: 0.64rem;
+  font-weight: 560;
+}
+
+.md-typeset .anatomy > dl > dt code {
+  padding: 0;
+  background: none;
+  font-size: 1em;
+}
+
+.md-typeset .anatomy > dl > dd {
+  margin: 0 0 0.45rem;
+  font-size: 0.66rem;
+  transition: color 0.2s;
+}
+
+.md-typeset .anatomy > dl > dd > :first-child {
+  margin-top: 0;
+}
+
+.md-typeset .anatomy > dl > dd > :last-child {
+  margin-bottom: 0;
+}
+
+/* Hover a part or its term: the other parts fade and the pair lifts. */
+.md-typeset .anatomy:has([data-seg]:hover) .anatomy__seg {
+  opacity: 0.35;
+}
+
+.md-typeset .anatomy:has([data-seg]:hover) dl > dd {
+  color: var(--base-500);
+}
+
+.md-typeset .anatomy:has([data-seg="1"]:hover) [data-seg="1"],
+.md-typeset .anatomy:has([data-seg="2"]:hover) [data-seg="2"],
+.md-typeset .anatomy:has([data-seg="3"]:hover) [data-seg="3"],
+.md-typeset .anatomy:has([data-seg="4"]:hover) [data-seg="4"],
+.md-typeset .anatomy:has([data-seg="5"]:hover) [data-seg="5"],
+.md-typeset .anatomy:has([data-seg="6"]:hover) [data-seg="6"] {
+  opacity: 1;
+  color: var(--base-100);
+}
+
+.md-typeset .anatomy:has([data-seg="1"]:hover) [data-seg="1"] .anatomy__value,
+.md-typeset .anatomy:has([data-seg="2"]:hover) [data-seg="2"] .anatomy__value,
+.md-typeset .anatomy:has([data-seg="3"]:hover) [data-seg="3"] .anatomy__value,
+.md-typeset .anatomy:has([data-seg="4"]:hover) [data-seg="4"] .anatomy__value,
+.md-typeset .anatomy:has([data-seg="5"]:hover) [data-seg="5"] .anatomy__value,
+.md-typeset .anatomy:has([data-seg="6"]:hover) [data-seg="6"] .anatomy__value {
+  background: color-mix(in srgb, var(--seg) 28%, transparent);
+  transform: translateY(calc(-2px * var(--motion-scale)));
+}
+
+@media screen and (max-width: 30em) {
+  .md-typeset .anatomy__name {
+    font-size: 0.8rem;
+  }
+
+  .md-typeset .anatomy > dl {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Figures: screenshots ──
+   <figure class="screenshot" markdown="span"> + image + <figcaption>.
+   The frame and shadow keep a white console screenshot from bleeding into a
+   light page; on dark themes it's dimmed a touch until you point at it.
+   mkdocs-glightbox wraps each image in a.glightbox for click-to-zoom. */
+.md-typeset figure.screenshot {
+  margin: 1.8em auto;
+}
+
+.md-typeset figure.screenshot img {
+  border: 1px solid var(--base-700);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  transition: filter 0.25s;
+}
+
+:is([data-theme="dark"], [data-theme="midnight"], [data-theme="meadow-dark"]) .md-typeset figure.screenshot img {
+  filter: brightness(0.88);
+}
+
+:is([data-theme="dark"], [data-theme="midnight"], [data-theme="meadow-dark"]) .md-typeset figure.screenshot a:is(:hover, :focus-visible) img {
+  filter: none;
+}
+
+.md-typeset figcaption {
+  max-width: 36rem;
+  margin-top: 0.9em;
+  color: var(--base-400);
+  font-size: 0.64rem;
+  font-style: normal;
+}
+
+.md-typeset a.glightbox {
+  display: block;
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+
+/* Lightbox in the theme's colours. */
+.goverlay {
+  background: color-mix(in srgb, var(--base-950) 94%, transparent) !important;
+}
+
+.glightbox-clean .gslide-description {
+  background: var(--base-900) !important;
+}
+
+.glightbox-clean .gslide-title {
+  color: var(--base-100) !important;
+}
+
+.glightbox-clean .gslide-desc {
+  color: var(--base-300) !important;
+}
+
+/* ── Architecture diagrams (mkdocs-drawio) ──
+   Always on a white canvas: Azure and AWS icons are drawn for white, and the
+   viewer would otherwise flip diagrams to dark mode with the OS setting,
+   whatever theme the reader picked here. */
+.md-typeset .drawio {
+  margin: 1.8em 0;
+  padding: 0.6rem;
+  border: 1px solid var(--base-700);
+  border-radius: 14px;
+  background: #ffffff;
+  color-scheme: light;
+  overflow-x: auto;
+}
+
+.md-typeset .drawio :is(.mxgraph, .geDiagramContainer, svg) {
+  color-scheme: light !important;
+}
+
+.md-typeset .drawio .mxgraph {
+  margin: 0 auto;
+}
+
+.md-typeset figure > .drawio {
+  width: 100%;
+  margin: 0;
+}
+
+/* One image on the page: no previous / next arrows that go nowhere. */
+.glightbox-clean :is(.gprev, .gnext).disabled {
+  display: none;
+}
