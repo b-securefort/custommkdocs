@@ -6,6 +6,9 @@ title: Writing guide
 
 How to add and edit pages on this site. Copy the examples and change the text.
 
+!!! tip "Rather not write Markdown by hand?"
+    The [page writer](../write.md) builds a page in your browser: pick components by what your reader needs, see the page as it will look, and download the finished file with instructions for adding it to the repository.
+
 ## Add a page
 
 The site has two menus:

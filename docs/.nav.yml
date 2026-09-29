@@ -7,5 +7,6 @@ nav:
   - index.md
   - getting-started
   - components
+  - write.md
   - appearance.md
 append_unmatched: true

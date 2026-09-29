@@ -611,7 +611,8 @@
     if (!revealObserver || motion() === "off") return;
     var counts = new Map();
     document.querySelectorAll(REVEAL_SELECTOR).forEach(function (node) {
-      if (node.closest(".appearance") || node.parentElement.closest("[data-reveal]")) return;
+      // The writer redraws its preview as you type; fading in would flicker.
+      if (node.closest(".appearance, .writer") || node.parentElement.closest("[data-reveal]")) return;
       var parent = node.parentElement;
       var index = counts.get(parent) || 0;
       counts.set(parent, index + 1);

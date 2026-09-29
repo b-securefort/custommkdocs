@@ -51,10 +51,13 @@ extra_css:
   - stylesheets/themes.css
   - stylesheets/components.css
   - stylesheets/cloud.css
+  - stylesheets/writer.css
 
 extra_javascript:
   - javascripts/appearance.js
   - javascripts/components.js
+  # Does nothing except on the Write page (docs/write.md).
+  - javascripts/writer.js
 
 markdown_extensions:
   - abbr
@@ -150,12 +153,21 @@ extra:
     button_style: tactile
     motion: full             # "off" instead when the device asks for reduced motion
     nav: collapsed
+  # The Write page ends with how to add the page to the docs repository in
+  # Azure DevOps. Fill these in and its links and commands are ready to run;
+  # leave any empty and writers type their own in a Your values box.
+  writer:
+    organization: ""   # https://dev.azure.com/<your-org>
+    project: ""
+    repository: ""
+    branch: main
 
 hooks:
   - hooks/page_visibility.py
   - hooks/front_matter.py
   - hooks/components.py
   - hooks/page_info.py
+  - hooks/writer.py
 
 # `mkdocs serve` reloads when these change too.
 watch:

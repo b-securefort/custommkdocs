@@ -1,0 +1,1016 @@
+/* ── Page writer (docs/write.md, javascripts/writer.js) ──
+   Editor on the left, output on the right; stacked on narrow screens. The
+   preview sits inside .md-typeset like any page, so components are drawn
+   by the site's own styles. The editor avoids typeset elements (p, ul, h*)
+   so those styles don't leak into the form. */
+
+/* Checks and warnings: amber reads as "look at this" in every theme. */
+:root {
+  --writer-warn: #d97706;
+}
+
+/* The writer page hides both sidebars; give it the room. */
+.md-main__inner:has(#writer) {
+  max-width: 100rem;
+}
+
+.md-typeset .writer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem 1.5rem;
+  align-items: start;
+  margin-top: 1.2rem;
+  font-size: 0.7rem;
+}
+
+@media screen and (max-width: 76.1875em) {
+  .md-typeset .writer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Top bar ── */
+
+.writer__bar {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--base-700);
+  border-radius: 10px;
+  background: var(--base-950);
+}
+
+.md-typeset .writer .md-button {
+  margin: 0;
+}
+
+.md-typeset .writer .md-button .writer-icon {
+  margin-right: 0.3em;
+}
+
+.writer__download {
+  margin-left: auto !important;
+}
+
+.writer-status {
+  color: var(--base-500);
+  font-size: 0.65rem;
+}
+
+.writer-status--warn {
+  color: var(--writer-warn);
+  font-weight: 600;
+}
+
+/* ── Icons ── */
+
+.writer-icon {
+  display: inline-flex;
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.15em;
+}
+
+.writer-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.writer-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--base-400);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.writer-icon-btn:hover:not(:disabled),
+.writer-icon-btn:focus-visible {
+  background: var(--base-800);
+  color: var(--base-100);
+}
+
+.writer-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.writer-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Cards: the page settings and each component ── */
+
+.writer__editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.writer-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.writer-card {
+  padding: 0.7rem 0.8rem 0.8rem;
+  border: 1px solid var(--base-700);
+  border-radius: 10px;
+  background: var(--base-900);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+}
+
+.writer-block:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.writer-block__head,
+.writer-setup__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+.writer-block__type {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--base-100);
+  font-weight: 650;
+  font-size: 0.72rem;
+}
+
+.writer-block__type .writer-icon {
+  color: var(--accent-light);
+  font-size: 0.85rem;
+}
+
+.writer-block__actions {
+  display: inline-flex;
+  gap: 0.1rem;
+  margin-left: auto;
+}
+
+.writer-block__help {
+  margin: -0.1rem 0 0.55rem;
+  color: var(--base-500);
+  font-size: 0.64rem;
+}
+
+.writer-block__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* ── Fields ── */
+
+.writer-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+
+.writer-row--end {
+  justify-content: flex-end;
+}
+
+.writer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.writer-row > .writer-field {
+  flex: 1 1 12rem;
+}
+
+.writer-row > .writer-field--narrow {
+  flex: 0 1 9rem;
+}
+
+.writer-row > .writer-field--grow {
+  flex: 1 1 14rem;
+}
+
+.writer-field__label {
+  color: var(--base-300);
+  font-size: 0.64rem;
+  font-weight: 600;
+}
+
+.writer-field__hint {
+  color: var(--base-500);
+  font-size: 0.62rem;
+}
+
+.md-typeset .writer-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 1.9rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--base-700);
+  border-radius: 7px;
+  background: var(--base-800);
+  color: var(--base-100);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.md-typeset .writer-input::placeholder {
+  color: var(--base-500);
+  opacity: 1;
+}
+
+.md-typeset .writer-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  background: var(--base-900);
+}
+
+.md-typeset .writer-input:disabled {
+  opacity: 0.55;
+}
+
+.md-typeset .writer-input--title {
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.md-typeset select.writer-input {
+  cursor: pointer;
+}
+
+.md-typeset .writer-textarea {
+  resize: vertical;
+  overflow: hidden;
+}
+
+.md-typeset .writer-textarea--code {
+  font-family: var(--md-code-font-family);
+  font-size: 0.66rem;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 4;
+}
+
+.writer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem;
+  margin-bottom: -0.1rem;
+}
+
+.writer-toolbar .writer-icon-btn {
+  width: 1.45rem;
+  height: 1.45rem;
+}
+
+.writer-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--base-300);
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.writer-check input {
+  accent-color: var(--accent);
+  width: 0.8rem;
+  height: 0.8rem;
+  margin: 0;
+}
+
+.writer-check__icon {
+  display: inline-flex;
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.writer-check__icon svg {
+  fill: currentColor;
+}
+
+.writer-with-suffix,
+.writer-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.writer-with-suffix > span {
+  color: var(--base-500);
+  font-family: var(--md-code-font-family);
+}
+
+.writer-card-icon {
+  display: inline-flex;
+  flex: none;
+  width: 1.3rem;
+  height: 1.3rem;
+  color: var(--accent-light);
+}
+
+.writer-card-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+/* Page details disclosure */
+.writer-disclosure {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  width: 100%;
+  margin-top: 0.7rem;
+  padding: 0.45rem 0 0;
+  border: 0;
+  border-top: 1px dashed var(--base-700);
+  background: none;
+  color: var(--base-200);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.writer-disclosure::before {
+  content: "\25B8";
+  color: var(--base-500);
+  transition: transform 0.15s var(--ease-out);
+}
+
+.writer-disclosure[aria-expanded="true"]::before {
+  transform: rotate(90deg);
+}
+
+.writer-disclosure__hint {
+  color: var(--base-500);
+  font-weight: 400;
+  font-size: 0.64rem;
+}
+
+.writer-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.writer-setup__details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.writer-setup__details[hidden] {
+  display: none;
+}
+
+/* ── Lists inside a component (steps, tabs, cards…) ── */
+
+.writer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.writer-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.5rem 0.6rem 0.6rem;
+  border: 1px solid var(--base-700);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--base-700));
+  border-radius: 8px;
+  background: var(--base-950);
+}
+
+.writer-list--compact .writer-item {
+  gap: 0.3rem;
+  padding: 0.35rem 0.5rem 0.5rem;
+}
+
+.writer-item__head {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.writer-item__label {
+  margin-right: auto;
+  color: var(--base-400);
+  font-size: 0.62rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.md-typeset .writer-add {
+  align-self: flex-start;
+}
+
+.md-typeset .writer-add-last {
+  width: 100%;
+  justify-content: center;
+  padding: 0.7rem;
+  border-style: dashed;
+}
+
+/* Table editor */
+.writer-table {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 3), minmax(5rem, 1fr)) auto;
+  gap: 0.3rem;
+  align-items: center;
+  overflow-x: auto;
+}
+
+.md-typeset .writer-table__head {
+  font-weight: 650;
+  background: var(--base-950);
+}
+
+/* Image */
+.writer-image {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.writer-image__thumb {
+  width: 4.5rem;
+  height: 3rem;
+  object-fit: cover;
+  border: 1px solid var(--base-700);
+  border-radius: 6px;
+  background: var(--base-800);
+}
+
+.writer-image__name {
+  flex: 1;
+  color: var(--base-300);
+  font-family: var(--md-code-font-family);
+  font-size: 0.64rem;
+  word-break: break-all;
+}
+
+/* ── Recipes (empty page and New page) ── */
+
+.writer-recipes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.6rem;
+}
+
+.writer-recipes__intro {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: var(--base-400);
+}
+
+.writer-recipes__title {
+  color: var(--base-100);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.writer-recipe {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--base-700);
+  border-radius: 10px;
+  background: var(--base-900);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease-out), transform 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+}
+
+.writer-recipe:hover,
+.writer-recipe:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(calc(-2px * var(--motion-scale, 1)));
+  outline: none;
+}
+
+.writer-recipe__name {
+  color: var(--base-100);
+  font-weight: 650;
+}
+
+.writer-recipe__text {
+  color: var(--base-400);
+  font-size: 0.64rem;
+}
+
+/* ── Output side: tabs and panels ── */
+
+.writer__side {
+  position: sticky;
+  top: 3.4rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: calc(100vh - 4.4rem);
+  border: 1px solid var(--base-700);
+  border-radius: 10px;
+  background: var(--base-900);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+@media screen and (max-width: 76.1875em) {
+  .writer__side {
+    position: static;
+    max-height: none;
+  }
+}
+
+.writer-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  padding: 0.35rem;
+  border-bottom: 1px solid var(--base-700);
+  background: var(--base-950);
+}
+
+.writer-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.6rem;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--base-400);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.writer-tab:hover {
+  color: var(--base-100);
+}
+
+.writer-tab[aria-selected="true"] {
+  background: var(--base-900);
+  color: var(--base-100);
+  box-shadow: var(--shadow-sm), inset 0 -2px 0 var(--accent);
+}
+
+.writer-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.writer-tab__count {
+  min-width: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--writer-warn);
+  color: #fff;
+  font-size: 0.6rem;
+  line-height: 1.1rem;
+  text-align: center;
+}
+
+.writer-tab__count[hidden] {
+  display: none;
+}
+
+.writer-panel {
+  flex: 1;
+  min-height: 0;
+  padding: 0.8rem 1rem 1.2rem;
+  overflow: auto;
+  font-size: 0.8rem;
+}
+
+.writer-panel[hidden] {
+  display: none;
+}
+
+.writer-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.md-typeset .writer-path {
+  margin-right: auto;
+  font-size: 0.66rem;
+}
+
+.md-typeset .writer-panel__lead {
+  margin: 0.8rem 0 0.4rem;
+  color: var(--base-300);
+  font-size: 0.7rem;
+}
+
+.md-typeset .writer-note {
+  margin: 0.6rem 0;
+  color: var(--base-400);
+  font-size: 0.66rem;
+}
+
+/* Preview */
+.writer-preview > h1:first-child {
+  margin-top: 0;
+}
+
+.writer-pv {
+  position: relative;
+  border-radius: 6px;
+}
+
+.writer-pv--active::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -0.6rem;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.writer-ghost {
+  margin: 0.8em 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px dashed var(--base-600);
+  border-radius: 8px;
+  color: var(--base-500);
+  font-size: 0.68rem;
+}
+
+.writer-ghost-text {
+  color: var(--base-600);
+}
+
+.writer-mermaid {
+  margin: 1em 0;
+  text-align: center;
+}
+
+.writer-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-typeset pre.writer-mermaid--pending,
+.md-typeset pre.writer-mermaid--error {
+  padding: 0.6rem 0.8rem;
+  border: 1px dashed var(--base-600);
+  border-radius: 8px;
+  color: var(--base-400);
+  font-size: 0.64rem;
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+.md-typeset pre.writer-mermaid--error {
+  border-color: var(--writer-warn);
+}
+
+.md-typeset pre.writer-mermaid--error::before {
+  content: attr(data-error);
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--base-200);
+  font-family: var(--md-text-font-family);
+}
+
+/* Content tabs in the preview and instructions are drawn without Material's
+   script, so mark the chosen label here. */
+.writer .tabbed-set > input:nth-child(1):checked ~ .tabbed-labels > :nth-child(1),
+.writer .tabbed-set > input:nth-child(2):checked ~ .tabbed-labels > :nth-child(2),
+.writer .tabbed-set > input:nth-child(3):checked ~ .tabbed-labels > :nth-child(3),
+.writer .tabbed-set > input:nth-child(4):checked ~ .tabbed-labels > :nth-child(4),
+.writer .tabbed-set > input:nth-child(5):checked ~ .tabbed-labels > :nth-child(5),
+.writer .tabbed-set > input:nth-child(6):checked ~ .tabbed-labels > :nth-child(6),
+.writer .tabbed-set > input:nth-child(7):checked ~ .tabbed-labels > :nth-child(7),
+.writer .tabbed-set > input:nth-child(8):checked ~ .tabbed-labels > :nth-child(8) {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Markdown source */
+.md-typeset .writer-source {
+  margin: 0;
+}
+
+.md-typeset .writer-source code {
+  max-height: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.66rem;
+}
+
+/* Checks */
+.md-typeset .writer-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset .writer-checks__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0 0 0.4rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  font-size: 0.7rem;
+  list-style: none;
+}
+
+.md-typeset .writer-checks__item > span:nth-child(2) {
+  flex: 1;
+}
+
+.writer-checks__item .writer-icon {
+  flex: none;
+  margin-top: 0.1em;
+}
+
+.writer-checks__item--warn .writer-icon {
+  color: var(--writer-warn);
+}
+
+.writer-checks__item--info .writer-icon {
+  color: var(--accent-light);
+}
+
+.writer-checks__item--ok .writer-icon,
+.writer-checks--manual .writer-icon {
+  color: var(--base-500);
+}
+
+.writer-link-btn {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-light);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.writer-link-btn:hover {
+  text-decoration: underline;
+}
+
+/* Add to site */
+.writer-files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.writer-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-950);
+  font-size: 0.7rem;
+}
+
+.writer-file__arrow {
+  color: var(--base-500);
+}
+
+.writer-file__folder {
+  margin-right: auto;
+}
+
+.writer-copyable {
+  position: relative;
+}
+
+.md-typeset .writer-copyable .writer-copy {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  z-index: 1;
+}
+
+.md-typeset .writer-publish .steps {
+  margin-top: 0.6rem;
+}
+
+/* ── Dialogs ── */
+
+.writer-dialog {
+  width: min(36rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  padding: 0;
+  border: 1px solid var(--base-700);
+  border-radius: 12px;
+  background: var(--base-900);
+  color: var(--base-200);
+  box-shadow: var(--shadow-lg);
+}
+
+.writer-dialog--wide {
+  width: min(46rem, calc(100vw - 2rem));
+}
+
+.writer-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.writer-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  animation: writer-pop 0.18s var(--ease-out);
+}
+
+@keyframes writer-pop {
+  from {
+    opacity: 0;
+    transform: translateY(calc(8px * var(--motion-scale, 1))) scale(0.98);
+  }
+}
+
+.writer-dialog__head {
+  display: flex;
+  align-items: center;
+  padding: 0.7rem 0.8rem 0.5rem 1rem;
+}
+
+.writer-dialog__title {
+  margin-right: auto;
+  color: var(--base-100);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.writer-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0 1rem 1rem;
+  overflow: auto;
+}
+
+.writer-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--base-700);
+}
+
+.md-typeset .writer-dialog__foot,
+.md-typeset .writer-dialog__warn {
+  margin: 0;
+  color: var(--base-400);
+  font-size: 0.66rem;
+}
+
+.md-typeset .writer-dialog__warn {
+  padding: 0.5rem 0.7rem;
+  border-left: 3px solid var(--writer-warn);
+  border-radius: 4px;
+  background: var(--base-950);
+  color: var(--base-200);
+}
+
+.writer-needs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.writer-needs__group {
+  margin: 0.5rem 0 0.15rem;
+  color: var(--base-500);
+  font-size: 0.6rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.writer-needs__none {
+  padding: 0.8rem 0;
+  color: var(--base-400);
+}
+
+.writer-need {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.writer-need:hover,
+.writer-need:focus-visible {
+  border-color: var(--base-700);
+  background: var(--base-800);
+  outline: none;
+}
+
+.writer-need .writer-icon {
+  flex: none;
+  margin-top: 0.15em;
+  color: var(--accent-light);
+  font-size: 0.9rem;
+}
+
+.writer-need__text {
+  display: flex;
+  flex-direction: column;
+}
+
+.writer-need__need {
+  color: var(--base-100);
+  font-weight: 600;
+}
+
+.writer-need__name {
+  color: var(--base-500);
+  font-size: 0.64rem;
+}
+
+/* ── Toast ── */
+
+.writer-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.6rem 0.9rem;
+  border-radius: 10px;
+  background: var(--base-100);
+  color: var(--base-900);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.7rem;
+  transform: translateX(-50%);
+  animation: writer-toast 0.2s var(--ease-out);
+}
+
+.writer-toast .writer-link-btn {
+  color: var(--base-900);
+  text-decoration: underline;
+}
+
+@keyframes writer-toast {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(8px * var(--motion-scale, 1)));
+  }
+}
+
+[data-motion="off"] .writer-dialog[open],
+[data-motion="off"] .writer-toast {
+  animation: none;
+}

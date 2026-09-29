@@ -184,6 +184,9 @@
     // inside <div class="no-values">, such as a table naming the placeholders.
     document.querySelectorAll(".md-typeset code").forEach(function (code) {
       if (code.closest(".your-values, .anatomy, .no-values, .language-markdown, .language-md")) return;
+      // Marked by an earlier box on this page (the page writer adds boxes as
+      // you type); marking again would nest the spans.
+      if (code.querySelector(".ph")) return;
       markPlaceholders(code, names);
     });
     names.forEach(function (name) {
@@ -245,6 +248,9 @@
     mountReviewDates();
     drawDiagrams();
   }
+
+  // The page writer's preview draws components after the page has loaded.
+  window.docsComponents = { mount: mountAll };
 
   if (window.document$ && typeof window.document$.subscribe === "function") {
     window.document$.subscribe(mountAll);
