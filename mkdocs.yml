@@ -139,7 +139,17 @@ extra:
   # Footer copyright line (overrides/partials/copyright.html). Not
   # `version`: Material reserves that for mike.
   release: 1.0.0
-  created_by: Balaji
+  created_by: Balaji Chandra Sekar
+  ui_ux: Balaji Chandra Sekar
+  # What readers get until they choose on the Appearance page. Ids are the
+  # ones listed in docs/getting-started/how-it-works.md.
+  appearance:
+    theme: auto              # auto, or a theme id
+    auto_light: meadow       # what Auto shows when the device is in light mode
+    auto_dark: meadow-dark   # ...and in dark mode
+    button_style: tactile
+    motion: full             # "off" instead when the device asks for reduced motion
+    nav: collapsed
 
 hooks:
   - hooks/page_visibility.py

@@ -8,12 +8,16 @@
  * ripple, scroll reveal, card spotlight, reading progress, jump highlight,
  * contents marker, copy check).
  *
+ * The defaults come from extra.appearance in mkdocs.yml, via
+ * window.appearanceDefaults from main.html. The theme can also be "auto",
+ * which data-theme never holds: it resolves to auto_light or auto_dark.
+ *
  * Keep the id lists below in sync with the pre-paint script in main.html. */
 (function () {
   "use strict";
 
   var THEMES = [
-    { id: "meadow", label: "Meadow", description: "Green on white. The default.", swatch: "#ffffff", accent: "#86bc25" },
+    { id: "meadow", label: "Meadow", description: "Green on white.", swatch: "#ffffff", accent: "#86bc25" },
     { id: "meadow-dark", label: "Meadow Dark", description: "Signature green on true black.", swatch: "#000000", accent: "#86bc25" },
     { id: "dark", label: "Dark", description: "Near-black with electric blue.", swatch: "#0a0a0c", accent: "#0070f3" },
     { id: "midnight", label: "Midnight", description: "Blue-tinted dark, indigo accent.", swatch: "#0a0e1c", accent: "#6366f1" },
@@ -39,8 +43,20 @@
     { id: "expanded", label: "Expanded", description: "Every group starts open, and you can still close any of them. Wide screens only." },
   ];
 
+  // Set by the pre-paint script in main.html from extra.appearance in mkdocs.yml.
+  var DEFAULTS = window.appearanceDefaults;
+
+  // Auto isn't a palette: it shows auto_light or auto_dark as the system
+  // setting says, and switches live while it's the reader's choice.
+  var AUTO = {
+    id: "auto",
+    label: "Auto",
+    description: "Follows your device: " + find(THEMES, DEFAULTS.autoLight).label + " in light mode, " + find(THEMES, DEFAULTS.autoDark).label + " in dark.",
+  };
+  var THEME_CHOICES = [AUTO].concat(THEMES);
+
   var SETTINGS = {
-    theme: { attr: "data-theme", key: "docs.theme", options: THEMES, noun: "Theme" },
+    theme: { attr: "data-theme", key: "docs.theme", options: THEME_CHOICES, noun: "Theme" },
     buttonStyle: { attr: "data-button-style", key: "docs.buttonStyle", options: BUTTON_STYLES, noun: "Button style" },
     motion: { attr: "data-motion", key: "docs.motion", options: MOTION_LEVELS, noun: "Motion" },
     nav: { attr: "data-nav", key: "docs.nav", options: NAV_MODES, noun: "Sidebar" },
@@ -93,14 +109,30 @@
   }
 
   function fallback(name) {
-    if (name === "theme") return systemDark.matches ? "meadow-dark" : "meadow";
-    if (name === "motion") return systemCalm.matches ? "off" : "full";
-    if (name === "nav") return "collapsed";
-    return "rounded";
+    if (name === "motion" && systemCalm.matches) return "off";
+    return DEFAULTS[name];
   }
 
+  /** The value applied to <html>. */
   function current(name) {
     return root.getAttribute(SETTINGS[name].attr);
+  }
+
+  // The theme the reader picked, which may be "auto". Kept here, not only in
+  // storage, so the choice holds for the visit when storage is blocked.
+  var themeChoice = (function () {
+    var saved = read(SETTINGS.theme.key);
+    return find(THEME_CHOICES, saved) ? saved : DEFAULTS.theme;
+  })();
+
+  /** The option the controls show as picked. */
+  function selected(name) {
+    return name === "theme" ? themeChoice : current(name);
+  }
+
+  function resolve(name, id) {
+    if (name === "theme" && id === "auto") return systemDark.matches ? DEFAULTS.autoDark : DEFAULTS.autoLight;
+    return id;
   }
 
   function motion() {
@@ -114,17 +146,24 @@
     var option = find(setting.options, id);
     if (!option) return;
     if (persist !== false) write(setting.key, id);
-    if (current(name) === id) return;
+    var picked = selected(name) !== id;
+    if (name === "theme") themeChoice = id;
 
-    var apply = function () {
-      root.setAttribute(setting.attr, id);
-      if (name === "theme") syncFavicon(id);
-      if (name === "nav") resetNavGroups();
+    // Auto can resolve to the theme already showing: only the controls change.
+    var value = resolve(name, id);
+    if (current(name) === value) {
       syncControls();
-    };
-    if (name === "theme") withThemeTransition(apply, origin);
-    else apply();
-    announce(setting.noun + ": " + option.label);
+    } else {
+      var apply = function () {
+        root.setAttribute(setting.attr, value);
+        if (name === "theme") syncFavicon(value);
+        if (name === "nav") resetNavGroups();
+        syncControls();
+      };
+      if (name === "theme") withThemeTransition(apply, origin);
+      else apply();
+    }
+    if (picked) announce(setting.noun + ": " + option.label);
   }
 
   // Green favicon for the Meadow themes, its blue twin for the rest — the
@@ -144,14 +183,14 @@
     });
   }
 
-  // With no stored choice, follow the OS as it changes (e.g. sunset dark mode).
-  function followSystem(name) {
-    return function () {
-      if (!read(SETTINGS[name].key)) choose(name, fallback(name), null, false);
-    };
-  }
-  onMediaChange(systemDark, followSystem("theme"));
-  onMediaChange(systemCalm, followSystem("motion"));
+  // Follow the OS as it changes (e.g. sunset dark mode): the theme while Auto
+  // is the choice, motion until the reader picks a level.
+  onMediaChange(systemDark, function () {
+    if (themeChoice === "auto") choose("theme", "auto", null, false);
+  });
+  onMediaChange(systemCalm, function () {
+    if (!read(SETTINGS.motion.key)) choose("motion", fallback("motion"), null, false);
+  });
 
   function onMediaChange(query, handler) {
     if (query.addEventListener) query.addEventListener("change", handler);
@@ -214,14 +253,14 @@
 
   /** Reflect the current attributes in every rendered control. */
   function syncControls() {
-    var theme = current("theme");
+    var theme = selected("theme");
     document.querySelectorAll(".swatch[data-option]").forEach(function (swatch) {
       var on = swatch.getAttribute("data-option") === theme;
       swatch.setAttribute("aria-checked", on ? "true" : "false");
       swatch.tabIndex = on ? 0 : -1;
     });
     document.querySelectorAll(".appearance input[type=radio]").forEach(function (input) {
-      input.checked = current(input.name) === input.value;
+      input.checked = selected(input.name) === input.value;
     });
   }
 
@@ -247,7 +286,7 @@
     label.textContent = "Theme";
     var group = el("div", "swatch-row", { role: "radiogroup", "aria-labelledby": "appearance-popover-label" });
 
-    THEMES.forEach(function (theme) {
+    THEME_CHOICES.forEach(function (theme) {
       var swatch = el("button", "swatch", {
         type: "button",
         role: "radio",
@@ -255,8 +294,15 @@
         "aria-label": theme.label,
         "data-option": theme.id,
       });
-      swatch.style.setProperty("--swatch-bg", theme.swatch);
-      swatch.style.setProperty("--swatch-accent", theme.accent);
+      if (theme === AUTO) {
+        // Split between the two themes Auto picks from.
+        swatch.classList.add("swatch--auto");
+        swatch.style.setProperty("--swatch-light", find(THEMES, DEFAULTS.autoLight).swatch);
+        swatch.style.setProperty("--swatch-dark", find(THEMES, DEFAULTS.autoDark).swatch);
+      } else {
+        swatch.style.setProperty("--swatch-bg", theme.swatch);
+        swatch.style.setProperty("--swatch-accent", theme.accent);
+      }
       swatch.addEventListener("click", function () {
         choose("theme", theme.id, swatch);
       });
@@ -326,7 +372,7 @@
   function optionCard(name, option, preview) {
     var card = el("label", "option-card");
     var input = el("input", null, { type: "radio", name: name, value: option.id });
-    input.checked = current(name) === option.id;
+    input.checked = selected(name) === option.id;
     input.addEventListener("change", function () {
       if (input.checked) choose(name, option.id, card);
     });
@@ -350,6 +396,13 @@
   }
 
   function themePreview(theme) {
+    if (theme === AUTO) {
+      // The light and dark previews stacked, the dark one cut diagonally.
+      var split = el("span", "theme-preview-auto", { "aria-hidden": "true" });
+      split.appendChild(themePreview(find(THEMES, DEFAULTS.autoLight)));
+      split.appendChild(themePreview(find(THEMES, DEFAULTS.autoDark)));
+      return split;
+    }
     var preview = el("span", "theme-preview", { "data-theme": theme.id, "aria-hidden": "true" });
     preview.innerHTML =
       '<span class="theme-preview__bar"><i></i><i></i><i></i></span>' +
@@ -411,7 +464,7 @@
     host.innerHTML = "";
 
     host.appendChild(
-      fieldset("Colour", "option-grid", THEMES.map(function (t) {
+      fieldset("Colour", "option-grid", THEME_CHOICES.map(function (t) {
         return optionCard("theme", t, themePreview(t));
       }))
     );
@@ -433,7 +486,7 @@
 
     var footer = el("div", "appearance__footer");
     var note = el("span");
-    note.textContent = "Saved in this browser. Until you choose, theme and motion follow your system settings.";
+    note.textContent = "Saved in this browser. Auto follows your device's light or dark mode.";
     var reset = el("button", "md-button md-button--ghost md-button--sm", { type: "button" });
     reset.textContent = "Reset to defaults";
     reset.addEventListener("click", function () {

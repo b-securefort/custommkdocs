@@ -464,6 +464,11 @@ body {
     box-shadow 0.2s;
 }
 
+/* Auto: half its light theme, half its dark one. */
+.swatch--auto {
+  background: linear-gradient(90deg, var(--swatch-light) 50%, var(--swatch-dark) 50%);
+}
+
 .swatch:hover {
   transform: scale(calc(1 + 0.14 * var(--motion-scale)));
 }
@@ -1857,6 +1862,19 @@ html .md-footer-meta.md-typeset a {
   border: 1px solid var(--base-700);
   border-radius: 10px;
   background: var(--base-900);
+}
+
+/* Auto's preview: its two themes stacked, the dark one cut on a diagonal. */
+.theme-preview-auto {
+  display: grid;
+}
+
+.theme-preview-auto > .theme-preview {
+  grid-area: 1 / 1;
+}
+
+.theme-preview-auto > .theme-preview + .theme-preview {
+  clip-path: polygon(60% 0, 100% 0, 100% 100%, 40% 100%);
 }
 
 .theme-preview__bar {

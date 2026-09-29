@@ -9,34 +9,55 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:wght@400..700&display=swap">
   <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
   {#- Paint the saved appearance before the first frame, so a reload never
-      flashes the default theme. Keep these id lists in sync with THEMES /
+      flashes the default theme. The defaults come from extra.appearance in
+      mkdocs.yml; the literals after each list below only cover a missing or
+      misspelled entry there. Keep these id lists in sync with THEMES /
       BUTTON_STYLES / MOTION_LEVELS / NAV_MODES in javascripts/appearance.js. -#}
   <script>
     (function () {
       var root = document.documentElement;
+      var config = {{ (config.extra.appearance or {}) | tojson }};
+      var THEMES = ["meadow", "meadow-dark", "dark", "midnight", "light", "sand"];
+      var BUTTON_STYLES = ["rounded", "pill", "sharp", "tactile"];
+      var MOTION_LEVELS = ["full", "subtle", "off"];
+      var NAV_MODES = ["collapsed", "expanded"];
       function read(key) {
         try { return localStorage.getItem(key); } catch (e) { return null; }
       }
       function pick(value, allowed, fallback) {
         return allowed.indexOf(value) >= 0 ? value : fallback;
       }
+      function setting(key, allowed, fallback) {
+        var value = config[key];
+        if (value != null && allowed.indexOf(value) < 0) {
+          console.warn("extra.appearance." + key + ": unknown value \"" + value + "\", using \"" + fallback + "\"");
+        }
+        return pick(value, allowed, fallback);
+      }
+      // Shared with appearance.js, which uses them for "Reset to defaults" and
+      // for Auto following the system while the page is open.
+      var defaults = window.appearanceDefaults = {
+        theme: setting("theme", ["auto"].concat(THEMES), "auto"),
+        autoLight: setting("auto_light", THEMES, "meadow"),
+        autoDark: setting("auto_dark", THEMES, "meadow-dark"),
+        buttonStyle: setting("button_style", BUTTON_STYLES, "rounded"),
+        motion: setting("motion", MOTION_LEVELS, "full"),
+        nav: setting("nav", NAV_MODES, "collapsed"),
+      };
       var prefersDark = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
       var prefersCalm = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
-      var theme = pick(read("docs.theme"),
-        ["meadow", "meadow-dark", "dark", "midnight", "light", "sand"],
-        prefersDark ? "meadow-dark" : "meadow");
+      // "auto" is a choice, not a palette: it resolves to one of two themes.
+      var theme = pick(read("docs.theme"), ["auto"].concat(THEMES), defaults.theme);
+      if (theme === "auto") theme = prefersDark ? defaults.autoDark : defaults.autoLight;
       root.setAttribute("data-theme", theme);
       // The favicon ships green; the non-Meadow themes use its blue twin.
       var icon = document.querySelector('link[rel="icon"]');
       if (icon && theme.indexOf("meadow") !== 0) {
         icon.setAttribute("href", icon.getAttribute("href").replace("-green.", "-blue."));
       }
-      root.setAttribute("data-button-style", pick(read("docs.buttonStyle"),
-        ["rounded", "pill", "sharp", "tactile"], "rounded"));
-      root.setAttribute("data-motion", pick(read("docs.motion"),
-        ["full", "subtle", "off"], prefersCalm ? "off" : "full"));
-      root.setAttribute("data-nav", pick(read("docs.nav"),
-        ["collapsed", "expanded"], "collapsed"));
+      root.setAttribute("data-button-style", pick(read("docs.buttonStyle"), BUTTON_STYLES, defaults.buttonStyle));
+      root.setAttribute("data-motion", pick(read("docs.motion"), MOTION_LEVELS, prefersCalm ? "off" : defaults.motion));
+      root.setAttribute("data-nav", pick(read("docs.nav"), NAV_MODES, defaults.nav));
     })();
   </script>
 {% endblock %}
