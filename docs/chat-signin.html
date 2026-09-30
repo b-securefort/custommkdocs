@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- Where the chat's Microsoft sign-in popup comes back to (javascripts/chat.js).
+     It hands the result to the page that opened it and closes. Its address must
+     be a "Single-page application" redirect URI on the app registration named
+     by extra.chat.client_id in mkdocs.yml. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex">
+  <title>Signing in…</title>
+</head>
+<body>
+  <script src="javascripts/vendor/msal-redirect-bridge.min.js"></script>
+  <script>
+    msalRedirectBridge.broadcastResponseToMainFrame().catch(function () {
+      // Opened directly rather than by a sign-in: nothing to hand back.
+    });
+  </script>
+</body>
+</html>

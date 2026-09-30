@@ -60,6 +60,12 @@
       root.setAttribute("data-nav", pick(read("docs.nav"), NAV_MODES, defaults.nav));
     })();
   </script>
+  {#- The docs assistant (javascripts/chat.js) reads extra.chat from here. In the
+      <head>, which instant navigation never swaps, so it's read once. -#}
+  {%- set chat = config.extra.chat or {} %}
+  {%- if chat.enabled %}
+  <script id="__chat-config" type="application/json">{{ {"site_name": config.site_name, "chat": chat} | tojson }}</script>
+  {%- endif %}
 {% endblock %}
 
 {% block announce %}

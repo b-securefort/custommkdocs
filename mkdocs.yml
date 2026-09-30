@@ -52,12 +52,15 @@ extra_css:
   - stylesheets/components.css
   - stylesheets/cloud.css
   - stylesheets/writer.css
+  - stylesheets/chat.css
 
 extra_javascript:
   - javascripts/appearance.js
   - javascripts/components.js
   # Does nothing except on the Write page (docs/write.md).
   - javascripts/writer.js
+  # The chat button on every page; does nothing unless extra.chat.enabled.
+  - javascripts/chat.js
 
 markdown_extensions:
   - abbr
@@ -168,6 +171,38 @@ extra:
     prefix: incoming   # the pipeline moves bundles on to processed/ or failed/
     region: ""         # such as eu-west-1
     pipeline_id: ""    # the number after definitionId= in the pipeline's address
+  # The chat button in the bottom-right corner of every page
+  # (javascripts/chat.js). Questions go to Nexus, which answers from the
+  # knowledge base with the skill below; each one is sent on its own, and
+  # nothing is kept once the tab closes. Nexus must list this site's address
+  # in its APP_CORS_ORIGINS.
+  chat:
+    enabled: true
+    # Nexus's backend, without /api. "" when Nexus is served from the same
+    # address as the docs. Locally Nexus uses port 8000, so serve the docs on
+    # another one: mkdocs serve -a localhost:8001
+    api_url: http://localhost:8000
+    # The Nexus skill that answers ("shared:<name>" or "personal:<name>").
+    # shared:default is read-only and searches the knowledge base first.
+    skill_id: shared:default
+    # entra: readers sign in with their work account, and Nexus sees who
+    # asked. none: no sign-in, for a local Nexus with DEV_AUTH_BYPASS=true.
+    auth: none
+    # For auth: entra. The same values as the Nexus frontend's
+    # VITE_ENTRA_TENANT_ID / VITE_ENTRA_CLIENT_ID / VITE_ENTRA_API_SCOPE.
+    # Register <site>/chat-signin.html as a Single-page application redirect
+    # URI on that app registration.
+    tenant_id: ""
+    client_id: ""
+    api_scope: ""      # api://<nexus-api>/user_impersonation
+    title: Ask the docs
+    subtitle: Answers from the knowledge base
+    greeting: Hi! Ask me anything about these docs.
+    # Up to four questions offered before the first one is asked.
+    suggestions:
+      - How do I create a resource group?
+      - What naming conventions do we follow?
+      - How do I publish a new page to the docs?
 
 hooks:
   - hooks/page_visibility.py

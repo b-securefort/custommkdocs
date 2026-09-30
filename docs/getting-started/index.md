@@ -21,6 +21,7 @@ hooks/
   writer.py                        # the site's folders, pages and settings, for the Write page
 tools/ingest_bundle.py             # checks a Write page bundle and puts its files in docs/
 tools/codemirror/                  # builds the Write page's editor: npm install && npm run build
+tools/msal/                        # copies the chat's sign-in library: npm install && npm run build
 pipelines/ingest-bundle.yml        # Azure DevOps: bundle in S3 → ingest → pull request
 tests/                             # python -m unittest discover tests
 overrides/
@@ -38,8 +39,11 @@ docs/
   stylesheets/
     themes.css                     # the six palettes + mapping onto Material
     components.css                 # chrome, buttons, cards, home page, motion
+    chat.css                       # the chat button and panel
   javascripts/
     appearance.js                  # header switcher, Appearance page, effects
+    chat.js                        # the chat: questions to Nexus, answers from the knowledge base
+  chat-signin.html                 # where the chat's sign-in popup comes back to
 ```
 
 ## Navigation

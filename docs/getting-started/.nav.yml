@@ -3,4 +3,5 @@ nav:
   - index.md
   - how-it-works.md
   - custom-themes.md
+  - chat.md
 append_unmatched: true

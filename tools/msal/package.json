@@ -1,0 +1,11 @@
+{
+  "name": "docs-chat-msal",
+  "private": true,
+  "description": "Copies MSAL.js into docs/javascripts/vendor/ for the chat's Microsoft sign-in (javascripts/chat.js and chat-signin.html). Run: npm install && npm run build. Keep the version the same as the Nexus frontend's.",
+  "scripts": {
+    "build": "node copy.js"
+  },
+  "dependencies": {
+    "@azure/msal-browser": "5.7.0"
+  }
+}
