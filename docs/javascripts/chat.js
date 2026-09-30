@@ -36,6 +36,8 @@
   var BASE = SCRIPT ? SCRIPT.replace(/javascripts\/chat\.js(?:[?#].*)?$/, "") : "/";
   var MARKED_SRC = BASE + "javascripts/vendor/marked.min.js";
   var MSAL_SRC = BASE + "javascripts/vendor/msal-browser.min.js";
+  // Nexus's owl (its Abstract2.png, cropped to 256px): the chat is Nexus.
+  var OWL = '<img src="' + BASE + 'images/nexus-owl.png" alt="" width="256" height="256" draggable="false">';
   var SIGNIN_URL = new URL(BASE + "chat-signin.html", location.href).href;
 
   // "" is a valid api_url: Nexus served from the same origin as the docs.
@@ -65,7 +67,6 @@
 
   // Material Design Icons, as the theme ships them.
   var ICON = {
-    chat: svg("M12 3C6.5 3 2 6.6 2 11c0 2.2 1.1 4.2 2.8 5.5 0 .6-.4 2.2-2.8 4.5 2.4-.1 4.6-1 6.5-2.5 1.1.3 2.3.5 3.5.5 5.5 0 10-3.6 10-8s-4.5-8-10-8m0 14c-4.4 0-8-2.7-8-6s3.6-6 8-6 8 2.7 8 6-3.6 6-8 6m.2-10.5c-.9 0-1.6.2-2.1.5-.6.4-.9 1-.8 1.7h2q0-.45.3-.6c.2-.1.4-.2.7-.2s.6.1.8.3.3.4.3.7-.1.5-.2.7c-.2.2-.4.4-.6.5-.5.3-.9.6-1.1.8-.4.3-.5.6-.5 1.1h2c0-.3.1-.5.1-.7.1-.2.3-.3.5-.5.5-.2.8-.5 1.1-.9s.4-.8.4-1.2c0-.7-.3-1.3-.8-1.7-.4-.3-1.2-.5-2.1-.5M11 13v2h2v-2z"),
     chevron: svg("M7.41 8.58 12 13.17l4.59-4.59L18 10l-6 6-6-6z"),
     close: svg("M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"),
     send: svg("M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"),
@@ -77,7 +78,6 @@
     login: svg("M11 7 9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8z"),
     alert: svg("M11 15h2v2h-2zm0-8h2v6h-2zm1-5C6.47 2 2 6.5 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2m0 18a8 8 0 0 1-8-8 8 8 0 0 1 8-8 8 8 0 0 1 8 8 8 8 0 0 1-8 8"),
     book: svg("M12 21.5c-1.35-.85-3.8-1.5-5.5-1.5-1.65 0-3.35.3-4.75 1.05-.1.05-.15.05-.25.05-.25 0-.5-.25-.5-.5V6c.6-.45 1.25-.75 2-1 1.11-.35 2.33-.5 3.5-.5 1.95 0 4.05.4 5.5 1.5 1.45-1.1 3.55-1.5 5.5-1.5 1.17 0 2.39.15 3.5.5.75.25 1.4.55 2 1v14.6c0 .25-.25.5-.5.5-.1 0-.15 0-.25-.05-1.4-.75-3.1-1.05-4.75-1.05-1.7 0-4.15.65-5.5 1.5m-1-14c-1.36-.6-3.16-1-4.5-1-1.2 0-2.4.15-3.5.5v11.5c1.1-.35 2.3-.5 3.5-.5 1.34 0 3.14.4 4.5 1zM13 19c1.36-.6 3.16-1 4.5-1 1.2 0 2.4.15 3.5.5V7c-1.1-.35-2.3-.5-3.5-.5-1.34 0-3.14.4-4.5 1zm1-2.65c.96-.35 2.12-.52 3.5-.52 1.04 0 1.88.08 2.5.24v-1.5a13.9 13.9 0 0 0-6 .19zm0-2.66c.96-.35 2.12-.53 3.5-.53 1.04 0 1.88.08 2.5.24v-1.5c-.87-.16-1.71-.23-2.5-.23-1.28 0-2.45.15-3.5.45zM14 11c.96-.33 2.12-.5 3.5-.5.91 0 1.76.09 2.5.28V9.23c-.87-.15-1.71-.23-2.5-.23-1.32 0-2.5.15-3.5.46z"),
-    sparkle: svg("m9 4 2.5 5.5L17 12l-5.5 2.5L9 20l-2.5-5.5L1 12l5.5-2.5zm0 4.83L8 11l-2.17 1L8 13l1 2.17L10 13l2.17-1L10 11zM19 9l-1.26-2.74L15 5l2.74-1.25L19 1l1.25 2.75L23 5l-2.75 1.26zm0 14-1.26-2.74L15 19l2.74-1.25L19 15l1.25 2.75L23 19l-2.75 1.26z"),
   };
 
   /* ── Helpers ── */
@@ -882,7 +882,7 @@
       "aria-expanded": "false",
       "aria-controls": "chat-panel",
     });
-    launcher.innerHTML = '<span class="chat-launcher__icon chat-launcher__icon--open">' + ICON.chat + "</span>" + '<span class="chat-launcher__icon chat-launcher__icon--close">' + ICON.chevron + "</span>";
+    launcher.innerHTML = '<span class="chat-launcher__icon chat-launcher__icon--open">' + OWL + "</span>" + '<span class="chat-launcher__icon chat-launcher__icon--close">' + ICON.chevron + "</span>";
 
     var panel = el("section", "chat-panel", { id: "chat-panel", role: "dialog", "aria-label": TITLE, tabindex: "-1" });
     panel.hidden = true;
@@ -903,7 +903,7 @@
       "</div></header>" +
       '<div class="chat-panel__log" role="log" aria-label="Conversation">' +
       '<div class="chat-welcome">' +
-      '<span class="chat-welcome__icon">' + ICON.sparkle + "</span>" +
+      '<span class="chat-welcome__icon">' + OWL + "</span>" +
       '<p class="chat-welcome__greeting"></p>' +
       '<p class="chat-welcome__hint">Each question is answered on its own, so include the details it needs.</p>' +
       '<div class="chat-welcome__suggestions"></div>' +

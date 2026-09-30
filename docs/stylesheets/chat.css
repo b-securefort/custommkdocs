@@ -40,16 +40,24 @@
   padding: 0;
   border: 0;
   border-radius: 50%;
-  /* The banner's gradient: --on-accent text clears 4.5:1 across all of it. */
-  background: linear-gradient(135deg, var(--accent-button), var(--accent-2));
+  /* The Nexus owl is navy, blue and mint: it sits on white in every theme,
+     ringed in the accent. Open, the button turns into the banner's gradient
+     (--on-accent clears 4.5:1 across it) with a close chevron. */
+  background: #ffffff;
   color: var(--on-accent);
   box-shadow:
+    0 0 0 2px var(--accent),
     0 8px 24px -8px color-mix(in srgb, var(--accent) 70%, transparent),
     var(--shadow-lg);
   cursor: pointer;
   transition:
     transform 0.25s var(--ease-out),
-    box-shadow 0.25s;
+    box-shadow 0.25s,
+    background-color 0.25s;
+}
+
+.chat-is-open .chat-launcher {
+  background: linear-gradient(135deg, var(--accent-button), var(--accent-2));
 }
 
 .chat-launcher:hover {
@@ -77,6 +85,12 @@
   width: 1.35rem;
   height: 1.35rem;
   fill: currentColor;
+}
+
+.chat-launcher img {
+  width: 2.05rem;
+  height: 2.05rem;
+  user-select: none;
 }
 
 .chat-launcher__icon--close,
@@ -315,17 +329,21 @@
 .chat-welcome__icon {
   display: inline-grid;
   place-items: center;
-  width: 2.2rem;
-  height: 2.2rem;
-  margin-bottom: 0.5rem;
+  width: 3.4rem;
+  height: 3.4rem;
+  margin-bottom: 0.6rem;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent-light);
+  /* White like the launcher, so the owl reads on dark panels too. */
+  background: #ffffff;
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 0 7px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
-.chat-welcome__icon svg {
-  width: 1.15rem;
-  height: 1.15rem;
+.chat-welcome__icon img {
+  width: 2.45rem;
+  height: 2.45rem;
+  user-select: none;
 }
 
 .chat-welcome__greeting {
