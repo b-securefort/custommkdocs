@@ -24,8 +24,9 @@ build also copies each published page's Markdown to _writer/src/<path in
 docs/>, and gives every other page an "Edit in the page writer" button that
 opens it there. Both only where the Write page itself is: with `draft: prod`
 on docs/write.md, production gets neither, and readers there can't edit or
-read the Markdown; staging gets both. Set extra.writer.sources to false to
-leave them out everywhere.
+read the Markdown; staging gets both. `mkdocs serve` shows draft pages, so
+it has both too: it's only ever on the writer's own computer. Set
+extra.writer.sources to false to leave them out everywhere.
 
 The site is static, so this is built once and the writer needs no server.
 """
@@ -37,6 +38,7 @@ import os
 import posixpath
 from urllib.parse import quote
 
+from mkdocs.structure.files import InclusionLevel
 from mkdocs.utils import get_relative_url
 from mkdocs.utils.meta import get_data
 
@@ -104,12 +106,23 @@ PLATFORMS = {
 }
 
 _files = None
-# The Write page's address, when this build publishes it.
+# The Write page's address, when this build has it.
 _writer_url = None
 # Whether the Write page was built this time, so the Markdown it opens is
-# published too. Under `mkdocs serve` a draft Write page is built although
-# it isn't published, and then this is true and _writer_url isn't.
+# published too.
 _writer_built = False
+# `mkdocs serve`, which shows draft pages, rather than `mkdocs build`.
+_serving = False
+
+
+def on_startup(command, dirty):
+    global _serving
+    _serving = command == "serve"
+
+
+def _shown():
+    """The pages this build shows: drafts too, under `mkdocs serve`."""
+    return InclusionLevel.is_in_serve if _serving else InclusionLevel.is_included
 
 
 def _icon(name, config):
@@ -127,13 +140,13 @@ def _sources(config):
 
 
 def on_files(files, config):
-    # After hooks/page_visibility.py, which marks `draft` pages: those aren't
-    # among the documentation pages, so a draft Write page gives no address.
+    # After hooks/page_visibility.py, which marks `draft` pages: a draft Write
+    # page gives no address, except to `mkdocs serve`, which shows drafts.
     global _files, _writer_url, _writer_built
     _files = files
     _writer_url = None
     _writer_built = False
-    for file in files.documentation_pages():
+    for file in files.documentation_pages(inclusion=_shown()):
         _, meta = get_data(file.content_string)
         if meta.get("writer"):
             _writer_url = file.url
@@ -151,7 +164,7 @@ def on_page_context(context, page, config, nav):
 
     pages = []
     titles = {}
-    for file in _files.documentation_pages():
+    for file in _files.documentation_pages(inclusion=_shown()):
         if file.page is None or file.page is page:
             continue
         title = file.page.title or file.name
@@ -204,7 +217,7 @@ def on_post_build(config):
     if not _sources(config) or _files is None or not _writer_built:
         return
     root = os.path.join(config.site_dir, *SOURCES_DIR.split("/"))
-    for file in _files.documentation_pages():
+    for file in _files.documentation_pages(inclusion=_shown()):
         if file.page is None or file.page.meta.get("writer"):
             continue
         target = os.path.join(root, *file.src_uri.split("/"))
