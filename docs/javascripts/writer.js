@@ -5,9 +5,12 @@
  * (tools/ingest_bundle.py reads it).
  *
  * hooks/writer.py puts the site's folders, pages and icons in the page as
- * JSON. Nothing is sent anywhere: the draft is kept in this browser (images
- * and files in IndexedDB) until the writer downloads it, and "Add to site"
- * says what to do with the bundle.
+ * JSON, and publishes each page's Markdown under _writer/src/ so any page
+ * can be opened here and changed. Nothing is sent anywhere: each page being
+ * written is a draft kept in this browser (its images, files and earlier
+ * versions in IndexedDB) until the writer downloads it, and "Add to site"
+ * says what to do with the bundle. Pasting from Word, web pages and the
+ * Azure DevOps wiki goes through javascripts/writer-convert.js.
  *
  * The Markdown is the page. The editor is CodeMirror (vendor/codemirror.min.js,
  * built by tools/codemirror/), with the components in a sidebar to drag or
@@ -24,17 +27,31 @@
   var BASE = SCRIPT ? SCRIPT.replace(/javascripts\/writer\.js(?:[?#].*)?$/, "") : "/";
   var MARKED_SRC = BASE + "javascripts/vendor/marked.min.js";
   var CM_SRC = BASE + "javascripts/vendor/codemirror.min.js";
+  // Pasting from Word and the web, and Azure DevOps wiki pages.
+  var CONVERT_SRC = BASE + "javascripts/writer-convert.js";
   // The build Material itself loads for pages with diagrams.
   var MERMAID_SRC = "https://unpkg.com/mermaid@11/dist/mermaid.min.js";
+  // The drafts: DRAFTS_KEY lists them, and each is kept under DRAFT_PREFIX
+  // and its id. DRAFT_KEY is where the one draft lived before there were
+  // several: read once, moved, removed.
+  var DRAFTS_KEY = "docs.writer.drafts";
+  var DRAFT_PREFIX = "docs.writer.draft.";
   var DRAFT_KEY = "docs.writer.draft";
   // Where drafts kept images before IndexedDB: read once, moved, removed.
   var IMAGES_KEY = "docs.writer.images";
   // Markdown, split or preview; and which sidebar panel is open.
   var VIEW_KEY = "docs.writer.view";
   var SIDE_KEY = "docs.writer.side";
-  // Images and files are too big for localStorage.
+  // Images and files are too big for localStorage, and so is each draft's
+  // history. Both are keyed "<draft id>/…".
   var DB_NAME = "docs.writer";
+  var DB_VERSION = 2;
   var DB_STORE = "assets";
+  var HISTORY_STORE = "history";
+  // A version of the draft is kept at most this often while someone
+  // writes, and this many per draft.
+  var VERSION_EVERY = 5 * 60 * 1000;
+  var VERSIONS_KEPT = 40;
 
   /* ── What a page can bring with it (keep in step with tools/ingest_bundle.py) ── */
 
@@ -374,8 +391,15 @@
     };
   }
 
-  function newState(meta, body) {
-    return { meta: meta, body: body || "", blocks: [], images: {}, files: {}, assetsLoaded: true, assetsSaved: true };
+  // id: the draft's, in DRAFTS_KEY. savedJson is the draft as last saved,
+  // so a save that changes nothing is skipped and the one before a change
+  // can be kept as a version.
+  function newState(meta, body, id) {
+    return { id: id || newId(), meta: meta, body: body || "", blocks: [], images: {}, files: {}, assetsLoaded: true, assetsSaved: true, savedJson: "", savedAt: 0 };
+  }
+
+  function newId() {
+    return "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
 
   function defaultFolder() {
@@ -1098,6 +1122,11 @@
         source = h("div", { class: "writer-image" }, [
           h("img", { class: "writer-image__thumb", src: assetUrl("images", b.image), alt: "" }),
           h("span", { class: "writer-image__name", text: "docs/" + assetPath("images", assetDir(), b.image) }),
+          editableImage(b.image)
+            ? button("Crop or hide details", "image-edit-outline", "md-button--ghost md-button--sm", function () {
+                openImageEditor(b.image);
+              })
+            : null,
           button("Replace", "file-upload-outline", "md-button--ghost md-button--sm", function () {
             pickImage(function (name) {
               b.image = name;
@@ -2100,8 +2129,9 @@
 
   /* ── Writing Markdown ── */
 
-  function frontMatter() {
-    var m = state.meta;
+  // m: the page settings; the draft showing, unless another is given.
+  function frontMatter(m) {
+    m = m || state.meta;
     var out = [];
     if (m.applies_to.length) out.push("applies_to: [" + m.applies_to.join(", ") + "]");
     if (m.owner.trim()) out.push("owner: " + yamlString(m.owner.trim()));
@@ -2117,13 +2147,16 @@
     return out.length ? "---\n" + out.join("\n") + "\n---\n\n" : "";
   }
 
-  // The file: front matter, the title and the body as written.
-  function toMarkdown() {
+  // The file: front matter, the title and the body as written. s: a draft,
+  // { meta, body }; the one showing, unless another is given.
+  function toMarkdown(s) {
+    s = s || state;
+    var meta = Object.assign(emptyMeta(), s.meta);
     var parts = [];
-    if (state.meta.title.trim() && !state.meta.titleInFront) parts.push("# " + state.meta.title.trim());
-    var body = trimBlank(lines(state.body)).join("\n");
+    if (meta.title.trim() && !meta.titleInFront) parts.push("# " + meta.title.trim());
+    var body = trimBlank(lines(s.body)).join("\n");
     if (body) parts.push(body);
-    return frontMatter() + parts.join("\n\n") + "\n";
+    return frontMatter(meta) + parts.join("\n\n") + "\n";
   }
 
   /* ── Preview: the same HTML the build produces, styled by the site ── */
@@ -2174,7 +2207,54 @@
   function renderPlain(md) {
     if (!md.trim()) return "";
     if (!window.marked) return "<p>" + esc(md).replace(/\n\n+/g, "</p><p>") + "</p>";
-    return finish(window.marked.parse(extensions(md)));
+    return finish(window.marked.parse(extensions(pythonish(md))));
+  }
+
+  // Where the site's build (Python-Markdown) reads Markdown differently from
+  // marked, so the preview doesn't show what the page won't: a list or table
+  // straight under a line of text stays part of that paragraph, and list
+  // items indented by fewer than four spaces aren't nested. (Bare web
+  // addresses not being links is in marked's settings, in mount.)
+  function pythonish(md) {
+    var ls = lines(md);
+    var fence = null;
+    function text(line) {
+      return line.trim() && !/^\s/.test(line) && !LIST_ITEM.test(line) && !/^\s*(#|<|!!!|\?\?\?|===|:\s|>|\||\{)/.test(line);
+    }
+    for (var i = 0; i < ls.length; i++) {
+      var line = ls[i];
+      var f = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.trim().slice(f[1].length).trim()) fence = null;
+        continue;
+      }
+      if (f) {
+        fence = f[1];
+        continue;
+      }
+      var prev = i ? ls[i - 1] : "";
+      if (text(prev) && /^([-*+]|\d+[.)])\s+\S/.test(line)) {
+        ls[i] = line.replace(/^(\d+)([.)])/, "$1\\$2").replace(/^([-*+])/, "\\$1");
+        continue;
+      }
+      if (text(prev) && /\|/.test(line) && RE.tableSep.test(ls[i + 1] || "")) {
+        ls[i] = line.replace(/\|/g, "\\|");
+        ls[i + 1] = ls[i + 1].replace(/\|/g, "\\|");
+        i++;
+        continue;
+      }
+      var item = LIST_ITEM.exec(line);
+      if (item && item[1].length > 0 && item[1].length < 4) {
+        for (var k = i - 1; k >= 0 && ls[k].trim(); k--) {
+          var up = LIST_ITEM.exec(ls[k]);
+          if (up && up[1].length < item[1].length) {
+            ls[i] = line.slice(item[1].length);
+            break;
+          }
+        }
+      }
+    }
+    return ls.join("\n");
   }
 
   function inline(md) {
@@ -2480,49 +2560,164 @@
     }
   }
 
-  function wrapper(before, after, sample) {
+  // Bold, italic and the like: around the selection, or the word the cursor
+  // is in. Pressed again, the markers come off, whether they're selected
+  // too or just outside the selection.
+  function toggleWrap(before, after, sample) {
     return function (area) {
+      var value = area.value;
       var start = area.selectionStart;
-      var inner = area.value.slice(start, area.selectionEnd) || sample;
+      var end = area.selectionEnd;
+      if (start === end) {
+        var a = start;
+        var b = end;
+        while (a > 0 && /[\w'’-]/.test(value[a - 1])) a--;
+        while (b < value.length && /[\w'’-]/.test(value[b])) b++;
+        if (a < start && b > end) {
+          start = a;
+          end = b;
+          area.setSelectionRange(start, end);
+        }
+      }
+      var sel = value.slice(start, end);
+      if (sel.length > before.length + after.length && sel.indexOf(before) === 0 && sel.slice(-after.length) === after) {
+        var bare = sel.slice(before.length, sel.length - after.length);
+        replaceSelection(area, bare);
+        area.setSelectionRange(start, start + bare.length);
+        return;
+      }
+      // * inside ** is bold, not italic.
+      var single = before.length === 1 && value[start - 2] === before && value[end + 1] === after;
+      if (!single && value.slice(start - before.length, start) === before && value.slice(end, end + after.length) === after) {
+        area.setSelectionRange(start - before.length, end + after.length);
+        replaceSelection(area, sel);
+        area.setSelectionRange(start - before.length, start - before.length + sel.length);
+        return;
+      }
+      var inner = sel || sample;
       replaceSelection(area, before + inner + after);
       area.setSelectionRange(start + before.length, start + before.length + inner.length);
     };
   }
 
-  function linePrefix(numbered) {
+  var PREFIX = {
+    ul: /^(\s*)[-*+]\s+(?!\[[ xX]\]\s)/,
+    ol: /^(\s*)\d+[.)]\s+/,
+    task: /^(\s*)[-*+]\s+\[[ xX]\]\s+/,
+    quote: /^(\s*)>\s?/,
+  };
+
+  // Lists and quotes: on each selected line, or off again when they all
+  // have it. A bulleted list turns into a numbered one and back. A list
+  // needs an empty line above it on this site, so one is added.
+  function togglePrefix(kind) {
     return function (area) {
       var value = area.value;
       var start = value.lastIndexOf("\n", area.selectionStart - 1) + 1;
-      var end = value.indexOf("\n", area.selectionEnd);
+      var endAt = area.selectionEnd > area.selectionStart && value[area.selectionEnd - 1] === "\n" ? area.selectionEnd - 1 : area.selectionEnd;
+      var end = value.indexOf("\n", endAt);
       if (end < 0) end = value.length;
-      area.setSelectionRange(start, end);
+      var ls = value.slice(start, end).split("\n");
+      var filled = ls.filter(function (l) {
+        return l.trim();
+      });
+      var re = PREFIX[kind];
+      var off = filled.length && filled.every(function (l) {
+        return re.test(l);
+      });
       var n = 0;
-      var text = value
-        .slice(start, end)
-        .split("\n")
-        .map(function (line) {
-          return line.trim() ? (numbered ? ++n + ". " : "- ") + line.replace(/^\s*([-*+]|\d+\.)\s+/, "") : line;
-        })
-        .join("\n");
-      replaceSelection(area, text || (numbered ? "1. " : "- "));
+      var out = ls.map(function (line) {
+        if (!line.trim()) return kind === "quote" && !off && ls.length > 1 ? ">" : line;
+        if (off) return line.replace(re, "$1");
+        var ind = /^\s*/.exec(line)[0];
+        var bare = line.replace(/^(\s*)(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+|>\s?)/, "$1").slice(ind.length);
+        return ind + (kind === "ul" ? "- " : kind === "ol" ? ++n + ". " : kind === "task" ? "- [ ] " : "> ") + bare;
+      });
+      var text = filled.length ? out.join("\n") : { ul: "- ", ol: "1. ", task: "- [ ] ", quote: "> " }[kind];
+      var prev = value.slice(0, Math.max(0, start - 1));
+      var prevLine = prev.slice(prev.lastIndexOf("\n") + 1);
+      if (!off && start > 0 && prevLine.trim() && !re.test(prevLine) && !PREFIX.ol.test(prevLine) && !PREFIX.ul.test(prevLine) && !PREFIX.task.test(prevLine)) text = "\n" + text;
+      area.setSelectionRange(start, end);
+      replaceSelection(area, text);
+      area.setSelectionRange(start + text.length, start + text.length);
     };
   }
 
+  // Section, sub-section or minor heading, or back to a paragraph (0).
+  function setHeading(level) {
+    return function (area) {
+      var value = area.value;
+      var start = value.lastIndexOf("\n", area.selectionStart - 1) + 1;
+      var end = value.indexOf("\n", area.selectionStart);
+      if (end < 0) end = value.length;
+      var line = value.slice(start, end);
+      var bare = line.replace(/^#{1,6}\s+/, "");
+      var text = level ? new Array(level + 1).join("#") + " " + (bare || "Heading") : bare;
+      if (text === line && level) text = bare;
+      area.setSelectionRange(start, end);
+      replaceSelection(area, text);
+      if (level && !bare) area.setSelectionRange(start + level + 1, start + text.length);
+    };
+  }
+
+  function headingLevelAt(area) {
+    var value = area.value;
+    var start = value.lastIndexOf("\n", area.selectionStart - 1) + 1;
+    var m = /^(#{1,6})\s/.exec(value.slice(start));
+    return m ? m[1].length : 0;
+  }
+
+  var HEADINGS = [
+    [0, "Paragraph", "Ctrl+Alt+0", "format-paragraph"],
+    [2, "Section", "Ctrl+Alt+2", "format-header-2"],
+    [3, "Sub-section", "Ctrl+Alt+3", "format-header-3"],
+    [4, "Minor heading", "Ctrl+Alt+4", "format-header-4"],
+  ];
+
+  // main: only on the Markdown's toolbar, not in a component's form; sep:
+  // a gap after it; menu: opens a menu under the button instead.
   var TOOLS = [
-    { icon: "format-bold", label: "Bold (Ctrl+B)", key: "b", run: wrapper("**", "**", "bold text") },
-    { icon: "format-italic", label: "Italic (Ctrl+I)", key: "i", run: wrapper("*", "*", "italic text") },
-    { icon: "code-tags", label: "Inline code: names of files, settings and values", run: wrapper("`", "`", "code") },
+    { icon: "undo", label: "Undo (Ctrl+Z)", main: true, run: function () { undoRedo("undo"); } },
+    { icon: "redo", label: "Redo (Ctrl+Y)", main: true, sep: true, run: function () { undoRedo("redo"); } },
+    {
+      icon: "format-header-pound",
+      label: "Heading: section, sub-section… (Ctrl+Alt+2, 3, 4)",
+      main: true,
+      sep: true,
+      menu: function (area) {
+        var level = headingLevelAt(area);
+        return HEADINGS.map(function (x) {
+          return { label: x[1], hint: x[2], icon: x[3], checked: level === x[0], run: function () { setHeading(x[0])(area); } };
+        });
+      },
+    },
+    { icon: "format-bold", label: "Bold (Ctrl+B)", key: "b", run: toggleWrap("**", "**", "bold text") },
+    { icon: "format-italic", label: "Italic (Ctrl+I)", key: "i", run: toggleWrap("*", "*", "italic text") },
+    { icon: "format-strikethrough-variant", label: "Strikethrough (Ctrl+Shift+X)", run: toggleWrap("~~", "~~", "struck-out text") },
+    { icon: "format-color-highlight", label: "Highlight (Ctrl+Shift+H)", run: toggleWrap("==", "==", "highlighted text") },
+    { icon: "code-tags", label: "Inline code: names of files, settings and values (Ctrl+E)", key: "e", sep: true, run: toggleWrap("`", "`", "code") },
     { icon: "link-variant", label: "Link to a page or website (Ctrl+K)", key: "k", run: openLinkDialog },
-    { icon: "cursor-default-click-outline", label: "Click path, such as Home > Resource groups > Create", run: wrapper("**", "**{ .ui-path }", "Home > Resource groups > Create") },
-    { icon: "keyboard-outline", label: "Keyboard shortcut", run: wrapper("++", "++", "ctrl+c") },
-    { icon: "format-list-bulleted", label: "Bulleted list", run: linePrefix(false) },
-    { icon: "format-list-numbered", label: "Numbered list", run: linePrefix(true) },
+    { icon: "cursor-default-click-outline", label: "Click path, such as Home > Resource groups > Create", run: toggleWrap("**", "**{ .ui-path }", "Home > Resource groups > Create") },
+    { icon: "keyboard-outline", label: "Keyboard shortcut, such as ++ctrl+c++", sep: true, run: toggleWrap("++", "++", "ctrl+c") },
+    { icon: "format-list-bulleted", label: "Bulleted list (Ctrl+Shift+8)", run: togglePrefix("ul") },
+    { icon: "format-list-numbered", label: "Numbered list (Ctrl+Shift+7)", run: togglePrefix("ol") },
+    { icon: "format-list-checks", label: "Checklist (Ctrl+Shift+9)", run: togglePrefix("task") },
+    { icon: "format-quote-close", label: "Quote", sep: true, run: togglePrefix("quote") },
+    { icon: "table-plus", label: "Table", main: true, grid: true },
+    {
+      icon: "minus",
+      label: "Divider: a line across the page",
+      main: true,
+      run: function () {
+        insertSnippet("---", null);
+      },
+    },
     {
       icon: "image-outline",
       label: "Image (or paste a screenshot)",
       run: function (area) {
-        pickImage(function (name) {
-          replaceSelection(area, "![Describe what the image shows](" + imageRel(name) + ")");
+        pickImage(function (name, linked) {
+          if (!linked) replaceSelection(area, "![Describe what the image shows](" + imageRel(name) + ")");
         });
       },
     },
@@ -2530,12 +2725,162 @@
       icon: "paperclip",
       label: "Attach a file to download: " + FILE_KINDS + ", up to " + FILE_MAX / MB + " MB",
       run: function (area) {
-        pickFile(function (name) {
-          insertFileLink(area, name);
+        pickFile(function (name, linked) {
+          if (!linked) insertFileLink(area, name);
         });
       },
     },
   ];
+
+  function undoRedo(which) {
+    if (ui.cm) {
+      window.CM[which](ui.cm);
+      ui.cm.focus();
+    } else if (ui.textarea) {
+      ui.textarea.focus();
+      document.execCommand(which);
+    }
+  }
+
+  // A table of cols × rows, with its headings to fill in (Tab goes to the
+  // next); the widths as they'll read once filled in.
+  function tableSnippet(cols, rows) {
+    var head = [];
+    for (var c = 0; c < cols; c++) head.push("Heading " + (c + 1));
+    function line(cells, fields) {
+      return "| " + cells.map(function (text, i) {
+        var pad = new Array(Math.max(0, head[i].length - text.length) + 1).join(" ");
+        return (fields[i] ? "${" + text + "}" : text) + pad;
+      }).join(" | ") + " |";
+    }
+    var out = [line(head, head.map(function () { return true; }))];
+    out.push("| " + head.map(function (text) {
+      return new Array(text.length + 1).join("-");
+    }).join(" | ") + " |");
+    for (var r = 0; r < rows; r++) out.push(line(head.map(function () { return ""; }), head.map(function (x, i) { return r === 0 && i === 0; })));
+    return out.join("\n");
+  }
+
+  /* A small menu under a toolbar button: items are { label, hint, icon,
+     checked, run }, "-" for a line between, or a node of its own. */
+
+  function openMenu(anchor, items, cls) {
+    closeMenu();
+    var node = h("div", { class: "writer-menu" + (cls ? " " + cls : ""), role: "menu" });
+    items.forEach(function (item) {
+      if (item === "-") node.appendChild(h("div", { class: "writer-menu__sep", role: "separator" }));
+      else if (item.nodeType) node.appendChild(item);
+      else {
+        node.appendChild(
+          h(
+            "button",
+            {
+              type: "button",
+              class: "writer-menu__item",
+              role: item.checked === undefined ? "menuitem" : "menuitemradio",
+              "aria-checked": item.checked === undefined ? null : item.checked ? "true" : "false",
+              onclick: function () {
+                closeMenu();
+                item.run();
+              },
+            },
+            [item.icon ? icon(item.icon) : h("span", { class: "writer-icon" }), h("span", { class: "writer-menu__label", text: item.label }), item.hint ? h("span", { class: "writer-menu__hint", text: item.hint }) : null]
+          )
+        );
+      }
+    });
+    ui.root.appendChild(node);
+    var rect = anchor.getBoundingClientRect();
+    var width = node.offsetWidth;
+    node.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + "px";
+    node.style.top = rect.bottom + 4 + "px";
+    function outside(event) {
+      if (!node.contains(event.target) && event.target !== anchor && !anchor.contains(event.target)) closeMenu();
+    }
+    node.addEventListener("keydown", function (event) {
+      var focusables = Array.prototype.slice.call(node.querySelectorAll("button:not(:disabled)"));
+      var i = focusables.indexOf(document.activeElement);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMenu();
+        anchor.focus();
+      } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !node.classList.contains("writer-menu--grid")) {
+        event.preventDefault();
+        var next = focusables[(i + (event.key === "ArrowDown" ? 1 : -1) + focusables.length) % focusables.length];
+        if (next) next.focus();
+      } else if (event.key === "Tab") closeMenu();
+    });
+    document.addEventListener("mousedown", outside, true);
+    ui.menu = { node: node, off: outside, anchor: anchor };
+    anchor.setAttribute("aria-expanded", "true");
+    var first = node.querySelector("[aria-checked=true]") || node.querySelector("button");
+    if (first) first.focus();
+    return node;
+  }
+
+  function closeMenu() {
+    if (!ui.menu) return;
+    document.removeEventListener("mousedown", ui.menu.off, true);
+    ui.menu.node.remove();
+    ui.menu.anchor.setAttribute("aria-expanded", "false");
+    ui.menu = null;
+  }
+
+  // The table button's menu: a grid to pick the size from, by pointer or
+  // with the arrow keys.
+  function openTableMenu(anchor) {
+    var MAXC = 6;
+    var MAXR = 8;
+    var size = [3, 2];
+    var label = h("div", { class: "writer-grid__label" });
+    var grid = h("div", { class: "writer-grid", style: "--cols:" + MAXC });
+    function mark() {
+      grid.querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle("writer-grid__cell--on", +b.getAttribute("data-c") <= size[0] && +b.getAttribute("data-r") <= size[1]);
+      });
+      label.textContent = size[0] + " columns × " + plural(size[1], "row") + ", under a row of headings";
+    }
+    for (var r = 1; r <= MAXR; r++) {
+      for (var c = 1; c <= MAXC; c++) {
+        (function (c, r) {
+          grid.appendChild(
+            h("button", {
+              type: "button",
+              class: "writer-grid__cell",
+              "data-c": c,
+              "data-r": r,
+              "aria-label": c + " columns, " + r + " rows",
+              tabindex: c === 1 && r === 1 ? "0" : "-1",
+              onmouseenter: function () {
+                size = [c, r];
+                mark();
+              },
+              onclick: function () {
+                closeMenu();
+                insertSnippet(tableSnippet(c, r), null);
+              },
+            })
+          );
+        })(c, r);
+      }
+    }
+    grid.addEventListener("keydown", function (event) {
+      var d = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[event.key];
+      if (d) {
+        event.preventDefault();
+        size = [Math.max(1, Math.min(MAXC, size[0] + d[0])), Math.max(1, Math.min(MAXR, size[1] + d[1]))];
+        mark();
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        closeMenu();
+        insertSnippet(tableSnippet(size[0], size[1]), null);
+      }
+    });
+    openMenu(anchor, [grid, label], "writer-menu--grid");
+    mark();
+    grid.querySelector("button").focus();
+  }
 
   function insertFileLink(area, name) {
     var label = area.value.slice(area.selectionStart, area.selectionEnd).trim() || downloadLabel(name);
@@ -2570,7 +2915,7 @@
         }
         if (opts.code || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
         for (var i = 0; i < TOOLS.length; i++) {
-          if (TOOLS[i].key && TOOLS[i].key === event.key.toLowerCase()) {
+          if (TOOLS[i].key && !TOOLS[i].main && TOOLS[i].key === event.key.toLowerCase()) {
             event.preventDefault();
             TOOLS[i].run(area);
             return;
@@ -2580,7 +2925,20 @@
       onpaste: opts.code
         ? null
         : function (event) {
-            var files = event.clipboardData && event.clipboardData.files;
+            var cd = event.clipboardData;
+            var files = cd && cd.files;
+            var C = convert();
+            var html = cd && cd.getData("text/html");
+            // Formatted text, as in the Markdown: headings, lists and bold
+            // come across. Word's picture of it doesn't.
+            if (C && html && C.isRichHtml(html) && /\S/.test(cd.getData("text/plain"))) {
+              var md = C.htmlToMarkdown(html, { image: pastedImage, link: pastedLink }).md;
+              if (md.trim()) {
+                event.preventDefault();
+                replaceSelection(area, md);
+              }
+              return;
+            }
             if (!files || !files.length) return;
             if (/^image\//.test(files[0].type)) {
               event.preventDefault();
@@ -2603,7 +2961,9 @@
       : h(
           "div",
           { class: "writer-toolbar", role: "toolbar", "aria-label": "Formatting" },
-          TOOLS.map(function (tool) {
+          TOOLS.filter(function (tool) {
+            return !tool.main;
+          }).map(function (tool) {
             return iconButton(tool.icon, tool.label, false, function () {
               tool.run(area);
             });
@@ -2778,25 +3138,76 @@
     });
   }
 
+  // done(name, linked): linked is how many links to the wiki's copy of it
+  // (.attachments/…) now point at this one, so the caller needn't add one.
   function addImageFile(file, done) {
-    if (file.size > IMAGE_MAX) {
-      toast("That image is over " + IMAGE_MAX / MB + " MB. Crop it or save it smaller, then try again.");
-      return;
-    }
     var ext = (file.type.split("/")[1] || extOf(file.name) || "png").replace("jpeg", "jpg").replace(/\+.*/, "");
     if (!IMAGE_TYPES[ext]) {
       toast("Use a PNG, JPEG, GIF, WebP or SVG image.");
       return;
     }
-    bytesOf(file).then(
-      function (bytes) {
-        var stem = file.name && !/^image\.\w+$/i.test(file.name) ? slugify(file.name.replace(/\.[^.]+$/, "")) : "";
-        var name = uniqueName("images", (stem || slug() + "-screenshot") + "." + ext);
-        addAsset("images", name, new Blob([bytes], { type: IMAGE_TYPES[ext] }));
-        done(name);
+    var stem = file.name && !/^image\.\w+$/i.test(file.name) ? slugify(file.name.replace(/\.[^.]+$/, "")) : "";
+    function keep(blob, type) {
+      bytesOf(blob).then(
+        function (bytes) {
+          var name = uniqueName("images", (stem || slug() + "-screenshot") + "." + type);
+          addAsset("images", name, new Blob([bytes], { type: IMAGE_TYPES[type] }));
+          done(name, linkAttachments(file.name, "images", name));
+        },
+        function () {
+          toast("Couldn't read that image. Save it somewhere else and try again.");
+        }
+      );
+    }
+    if (file.size <= IMAGE_MAX) {
+      keep(file, ext);
+      return;
+    }
+    // Screenshots from big screens: saved smaller rather than turned away.
+    var tooBig = "That image is over " + IMAGE_MAX / MB + " MB. Crop it or save it smaller, then try again.";
+    if (ext === "svg" || ext === "gif") {
+      toast(tooBig);
+      return;
+    }
+    shrinkImage(file).then(function (small) {
+      if (!small) {
+        toast(tooBig);
+        return;
+      }
+      keep(small.blob, small.ext);
+      toast("Saved the image smaller to fit " + IMAGE_MAX / MB + " MB" + (small.from[0] !== small.to[0] ? ": " + small.from.join(" × ") + " → " + small.to.join(" × ") + " pixels." : ", as " + small.ext.toUpperCase() + "."));
+    });
+  }
+
+  // A picture under IMAGE_MAX: first the same size as WebP, then smaller
+  // until it fits. Resolves with { blob, ext, from: [w, h], to: [w, h] },
+  // or null.
+  function shrinkImage(blob) {
+    if (!window.createImageBitmap) return Promise.resolve(null);
+    return createImageBitmap(blob).then(
+      function (bitmap) {
+        var w = bitmap.width;
+        var hgt = bitmap.height;
+        var scale = 1;
+        function attempt(n) {
+          var cw = Math.max(1, Math.round(w * scale));
+          var ch = Math.max(1, Math.round(hgt * scale));
+          var canvas = h("canvas", { width: cw, height: ch });
+          canvas.getContext("2d").drawImage(bitmap, 0, 0, cw, ch);
+          return new Promise(function (resolve) {
+            canvas.toBlob(resolve, "image/webp", 0.9);
+          }).then(function (out) {
+            var ext = out && (out.type.split("/")[1] || "").replace("jpeg", "jpg");
+            if (out && out.size <= IMAGE_MAX && IMAGE_TYPES[ext]) return { blob: out, ext: ext, from: [w, hgt], to: [cw, ch] };
+            if (n >= 6) return null;
+            scale *= 0.75;
+            return attempt(n + 1);
+          });
+        }
+        return attempt(0);
       },
       function () {
-        toast("Couldn't read that image. Save it somewhere else and try again.");
+        return null;
       }
     );
   }
@@ -2815,7 +3226,7 @@
       function (bytes) {
         var name = uniqueName("files", (slugify(file.name.replace(/\.[^.]+$/, "")) || "download") + "." + ext);
         addAsset("files", name, new Blob([bytes], { type: FILE_TYPES[ext][1] }));
-        done(name);
+        done(name, linkAttachments(file.name, "files", name));
       },
       function () {
         toast("Couldn't read that file. Save it somewhere else and try again.");
@@ -2823,25 +3234,33 @@
     );
   }
 
-  function pickImage(done) {
+  // many: more than one can be picked (the sidebar's Upload buttons), and
+  // done is called for each.
+  function pickImage(done, many) {
     var picker = h("input", {
       type: "file",
       accept: "image/png,image/jpeg,image/gif,image/webp,image/svg+xml",
+      multiple: !!many,
       onchange: function () {
-        if (picker.files[0]) addImageFile(picker.files[0], done);
+        Array.prototype.forEach.call(picker.files, function (file) {
+          addImageFile(file, done);
+        });
       },
     });
     picker.click();
   }
 
-  function pickFile(done) {
+  function pickFile(done, many) {
     var picker = h("input", {
       type: "file",
       accept: Object.keys(FILE_TYPES).map(function (ext) {
         return "." + ext;
       }).join(","),
+      multiple: !!many,
       onchange: function () {
-        if (picker.files[0]) addAttachment(picker.files[0], done);
+        Array.prototype.forEach.call(picker.files, function (file) {
+          addAttachment(file, done);
+        });
       },
     });
     picker.click();
@@ -2917,6 +3336,210 @@
       }
       node.close();
       if (next !== name) renameAsset(kind, name, next);
+    }
+  }
+
+  /* ── Editing a screenshot: crop it, and hide what readers shouldn't see
+     (IDs, names, email addresses) under a box or a blur. It's saved over
+     the image, in the page's bundle only; Undo in the toast puts it back. */
+
+  function editableImage(name) {
+    return /\.(png|jpe?g|webp)$/i.test(name);
+  }
+
+  function openImageEditor(name) {
+    var blob = state.images[name];
+    if (!blob) return;
+    if (!editableImage(name)) {
+      toast("Only PNG, JPEG and WebP images can be edited here.");
+      return;
+    }
+    createImageBitmap(blob).then(
+      function (bitmap) {
+        imageEditor(name, blob, bitmap);
+      },
+      function () {
+        toast("Couldn't read " + name + " to edit it.");
+      }
+    );
+  }
+
+  function imageEditor(name, blob, bitmap) {
+    var W = bitmap.width;
+    var H = bitmap.height;
+    var canvas = h("canvas", { class: "writer-imgedit__canvas", width: W, height: H, "aria-label": "The image: drag across it to mark an area" });
+    var ctx = canvas.getContext("2d");
+    var mode = "hide";
+    var style = "box";
+    var hides = []; // { x, y, w, h, style }
+    var crop = null; // { x, y, w, h }
+    var drag = null;
+    // A blur strong enough that text under it can't be read.
+    var block = Math.max(8, Math.round(Math.max(W, H) / 90));
+
+    function pixelate(r) {
+      var tw = Math.max(1, Math.ceil(r.w / block));
+      var th = Math.max(1, Math.ceil(r.h / block));
+      var tmp = h("canvas", { width: tw, height: th });
+      tmp.getContext("2d").drawImage(canvas, r.x, r.y, r.w, r.h, 0, 0, tw, th);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tmp, 0, 0, tw, th, r.x, r.y, r.w, r.h);
+      ctx.imageSmoothingEnabled = true;
+    }
+    function applyHides() {
+      hides.forEach(function (r) {
+        if (r.style === "blur") pixelate(r);
+        else {
+          ctx.fillStyle = "#1f2328";
+          ctx.fillRect(r.x, r.y, r.w, r.h);
+        }
+      });
+    }
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(bitmap, 0, 0);
+      applyHides();
+      var line = Math.max(2, Math.round(Math.max(W, H) / 500));
+      if (crop) {
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, 0, W, crop.y);
+        ctx.fillRect(0, crop.y + crop.h, W, H - crop.y - crop.h);
+        ctx.fillRect(0, crop.y, crop.x, crop.h);
+        ctx.fillRect(crop.x + crop.w, crop.y, W - crop.x - crop.w, crop.h);
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = line;
+        ctx.setLineDash([line * 4, line * 3]);
+        ctx.strokeRect(crop.x, crop.y, crop.w, crop.h);
+        ctx.setLineDash([]);
+      }
+      if (drag && drag.rect) {
+        ctx.strokeStyle = mode === "crop" ? "#fff" : "#f59e0b";
+        ctx.lineWidth = line;
+        ctx.strokeRect(drag.rect.x, drag.rect.y, drag.rect.w, drag.rect.h);
+      }
+      status.textContent = (hides.length ? plural(hides.length, "area") + " hidden" : "Nothing hidden yet") + (crop ? " · cropped to " + Math.round(crop.w) + " × " + Math.round(crop.h) : " · " + W + " × " + H + " pixels");
+      undoBtn.disabled = !hides.length && !crop;
+    }
+    function point(event) {
+      var r = canvas.getBoundingClientRect();
+      return { x: Math.max(0, Math.min(W, ((event.clientX - r.left) / r.width) * W)), y: Math.max(0, Math.min(H, ((event.clientY - r.top) / r.height) * H)) };
+    }
+    function rectOf(a, b) {
+      return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+    }
+    canvas.addEventListener("pointerdown", function (event) {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      drag = { start: point(event), rect: null };
+    });
+    canvas.addEventListener("pointermove", function (event) {
+      if (!drag) return;
+      drag.rect = rectOf(drag.start, point(event));
+      draw();
+    });
+    canvas.addEventListener("pointerup", function () {
+      if (!drag) return;
+      var r = drag.rect;
+      drag = null;
+      if (r && r.w > 3 && r.h > 3) {
+        r = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) };
+        if (mode === "crop") crop = r;
+        else {
+          r.style = style;
+          hides.push(r);
+        }
+      }
+      draw();
+    });
+
+    function tab(value, label, iconName) {
+      return h("button", {
+        type: "button",
+        class: "writer-view",
+        "aria-pressed": mode === value ? "true" : "false",
+        "data-mode": value,
+        onclick: function () {
+          mode = value;
+          modes.querySelectorAll("button").forEach(function (b) {
+            b.setAttribute("aria-pressed", b.getAttribute("data-mode") === mode ? "true" : "false");
+          });
+          styleField.hidden = mode !== "hide";
+          hint.textContent = mode === "crop" ? "Drag across the part to keep." : "Drag across each name, ID or email address to hide it.";
+        },
+      }, [icon(iconName), h("span", { text: label })]);
+    }
+    var modes = h("div", { class: "writer-views", role: "group", "aria-label": "Tool" }, [tab("hide", "Hide details", "rectangle-outline"), tab("crop", "Crop", "crop")]);
+    var styleSelect = h("select", { class: "writer-input", "aria-label": "Hide with" }, [h("option", { value: "box", text: "A solid box (safest)" }), h("option", { value: "blur", text: "A blur" })]);
+    styleSelect.addEventListener("change", function () {
+      style = styleSelect.value;
+    });
+    var styleField = h("label", { class: "writer-imgedit__style" }, [h("span", { class: "writer-field__label", text: "Hide with" }), styleSelect]);
+    var hint = h("span", { class: "writer-field__hint", text: "Drag across each name, ID or email address to hide it." });
+    var status = h("span", { class: "writer-field__hint writer-imgedit__status" });
+    var undoBtn = button("Undo", "undo", "md-button--ghost md-button--sm", function () {
+      if (crop && (!hides.length || mode === "crop")) crop = null;
+      else hides.pop();
+      draw();
+    });
+    var node = dialog(
+      "Edit " + name,
+      [
+        h("div", { class: "writer-row writer-row--center" }, [modes, styleField, undoBtn]),
+        hint,
+        h("div", { class: "writer-imgedit" }, [canvas]),
+        status,
+      ],
+      [
+        button("Cancel", null, "md-button--ghost md-button--sm", function () {
+          node.close();
+        }),
+        button("Save the image", "check", "md-button--primary md-button--sm", function () {
+          save();
+        }),
+      ]
+    );
+    node.classList.add("writer-dialog--wide", "writer-dialog--image");
+    draw();
+
+    function save() {
+      if (!hides.length && !crop) {
+        node.close();
+        return;
+      }
+      // The hidden areas at full size, then the crop.
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(bitmap, 0, 0);
+      applyHides();
+      var out = canvas;
+      if (crop) {
+        out = h("canvas", { width: crop.w, height: crop.h });
+        out.getContext("2d").drawImage(canvas, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+      }
+      var type = blob.type && /^image\/(png|jpeg|webp)$/.test(blob.type) ? blob.type : IMAGE_TYPES[extOf(name)];
+      out.toBlob(
+        function (next) {
+          if (!next) {
+            toast("Couldn't save the image.");
+            return;
+          }
+          node.close();
+          var before = state.images[name];
+          state.images[name] = next;
+          storeAsset("images", name, next);
+          drawAssets(true);
+          redrawImageBlocks();
+          changed();
+          toast("Saved " + name + (hides.length ? ", with " + plural(hides.length, "area") + " hidden" : "") + (crop ? ", cropped" : "") + ".", "Undo", function () {
+            state.images[name] = before;
+            storeAsset("images", name, before);
+            drawAssets(true);
+            redrawImageBlocks();
+            changed();
+          });
+        },
+        type,
+        0.92
+      );
     }
   }
 
@@ -3027,9 +3650,11 @@
     if (!dbOpen) {
       dbOpen = new Promise(function (resolve, reject) {
         try {
-          var request = window.indexedDB.open(DB_NAME, 1);
+          var request = window.indexedDB.open(DB_NAME, DB_VERSION);
           request.onupgradeneeded = function () {
-            request.result.createObjectStore(DB_STORE);
+            var conn = request.result;
+            if (!conn.objectStoreNames.contains(DB_STORE)) conn.createObjectStore(DB_STORE);
+            if (!conn.objectStoreNames.contains(HISTORY_STORE)) conn.createObjectStore(HISTORY_STORE);
           };
           request.onsuccess = function () {
             resolve(request.result);
@@ -3050,13 +3675,14 @@
   }
 
   // Runs fn(store) in one transaction and resolves with what fn's request
-  // returned, once the transaction is written.
-  function tx(mode, fn) {
+  // returned, once the transaction is written. name: the store, if not
+  // the images and files.
+  function tx(mode, fn, name) {
     return db().then(function (conn) {
       return new Promise(function (resolve, reject) {
         try {
-          var t = conn.transaction(DB_STORE, mode);
-          var request = fn(t.objectStore(DB_STORE));
+          var t = conn.transaction(name || DB_STORE, mode);
+          var request = fn(t.objectStore(name || DB_STORE));
           t.oncomplete = function () {
             resolve(request ? request.result : undefined);
           };
@@ -3087,32 +3713,43 @@
     );
   }
 
+  // Each draft's rows: "<id>/images/<name>" and "<id>/files/<name>".
+  function assetKey(id, kind, name) {
+    return id + "/" + kind + "/" + name;
+  }
+
+  function draftRange(id) {
+    return IDBKeyRange.bound(id + "/", id + "/￿");
+  }
+
   function storeAsset(kind, name, blob) {
+    var id = state.id;
     track(
       tx("readwrite", function (store) {
-        store.put({ kind: kind, name: name, blob: blob }, kind + "/" + name);
+        store.put({ draft: id, kind: kind, name: name, blob: blob }, assetKey(id, kind, name));
       }),
       false
     );
   }
 
   function unstoreAsset(kind, name) {
+    var id = state.id;
     track(
       tx("readwrite", function (store) {
-        store.delete(kind + "/" + name);
+        store.delete(assetKey(id, kind, name));
       }),
       false
     );
   }
 
-  // A new or opened page: its images and files replace the last page's.
+  // A new or opened page: its images and files replace what its draft had.
   function storeAllAssets() {
     var mine = state;
     var promise = tx("readwrite", function (store) {
-      store.clear();
+      store.delete(draftRange(mine.id));
       ["images", "files"].forEach(function (kind) {
         Object.keys(mine[kind]).forEach(function (name) {
-          store.put({ kind: kind, name: name, blob: mine[kind][name] }, kind + "/" + name);
+          store.put({ draft: mine.id, kind: kind, name: name, blob: mine[kind][name] }, assetKey(mine.id, kind, name));
         });
       });
     });
@@ -3120,26 +3757,39 @@
     return promise;
   }
 
-  // Once, when the page loads with a draft: its images and files, plus any
-  // images an older version of this page kept in localStorage.
+  // When a draft is shown: its images and files. The draft moved over from
+  // before there were several also takes the rows kept without a draft id,
+  // and any images an older version of this page kept in localStorage.
   function loadAssets() {
     var mine = state;
     function done(rows, stored) {
       if (state !== mine) return;
+      var claimed = [];
       (rows || []).forEach(function (row) {
-        if (row && (row.kind === "images" || row.kind === "files") && row.blob) mine[row.kind][row.name] = row.blob;
+        if (!row || !(row.kind === "images" || row.kind === "files") || !row.blob) return;
+        if (row.draft === mine.id) mine[row.kind][row.name] = row.blob;
+        else if (!row.draft && mine.claimLegacy) {
+          if (!mine[row.kind][row.name]) mine[row.kind][row.name] = row.blob;
+          claimed.push(row.kind + "/" + row.name);
+        }
       });
-      var legacy = legacyImages();
+      var legacy = mine.claimLegacy ? legacyImages() : {};
       Object.keys(legacy).forEach(function (name) {
         if (!mine.images[name]) mine.images[name] = legacy[name];
       });
       mine.assetsLoaded = true;
       mine.assetsSaved = stored;
-      if (Object.keys(legacy).length && stored) {
+      if ((claimed.length || Object.keys(legacy).length) && stored) {
         storeAllAssets().then(function () {
           write(IMAGES_KEY, null);
+          tx("readwrite", function (store) {
+            claimed.forEach(function (key) {
+              store.delete(key);
+            });
+          });
         });
       }
+      mine.claimLegacy = false;
       syncPaths();
       redrawImageBlocks();
       drawAssets(true);
@@ -3147,7 +3797,8 @@
       render();
     }
     tx("readonly", function (store) {
-      return store.getAll();
+      // The old rows have no draft id in their keys: read them all, once.
+      return mine.claimLegacy ? store.getAll() : store.getAll(draftRange(mine.id));
     }).then(
       function (rows) {
         done(rows, true);
@@ -3514,11 +4165,11 @@
         });
       })
       .then(function (assets) {
-        if (hasContent() && !window.confirm("Replace the page you're writing with the one in " + file.name + "? Download it first if you want to keep it.")) return;
         var target = /^docs\/(?:(.+)\/)?([^/]+)\.md$/.exec(manifest.page.target);
         var doc = parseDocument(fromUtf8(entries[manifest.page.src]));
-        closeForm();
-        state = newState(doc.meta, doc.body);
+        var was = hasContent() || hasAssets() ? state.id : "";
+        var id = takeDraft();
+        state = newState(doc.meta, doc.body, id);
         state.meta.mode = manifest.mode === "update" ? "update" : "new";
         placePage(target[1] || "", target[2]);
         var dirs = [];
@@ -3543,7 +4194,8 @@
         var files = Object.keys(state.files).length;
         toast(
           "Opened " + manifest.page.target + (images || files ? " with " + [images ? plural(images, "image") : "", files ? plural(files, "file") : ""].filter(Boolean).join(" and ") : "") + "." +
-            (skipped ? " Left out " + plural(skipped, "image or file", "images and files") + " that didn't match the manifest." : "")
+            (skipped ? " Left out " + plural(skipped, "image or file", "images and files") + " that didn't match the manifest." : "") +
+            keptNote(was, id)
         );
       })
       .catch(function (e) {
@@ -3631,8 +4283,9 @@
     var m = state.meta;
     // at: where in the block, as text or a pattern to find in its Markdown;
     // or { from, to } in the body. Without it, the block's first line.
-    function add(level, text, id, at, group) {
-      out.push({ level: level, text: text, id: id, at: at, group: group });
+    // fix: { label, run } when the writer can put it right itself.
+    function add(level, text, id, at, group, fix) {
+      out.push({ level: level, text: text, id: id, at: at, group: group, fix: fix });
     }
     if (!m.title.trim()) add("warn", "Give the page a title.");
     var live = liveBlocks();
@@ -3696,7 +4349,10 @@
           missing.map(function (n) {
             return "<" + n + ">";
           }).join(", "),
-        values.length ? values[0].id : null
+        values.length ? values[0].id : null,
+        null,
+        null,
+        { label: values.length ? "Add them" : "Add the box", run: function () { addPlaceholders(missing); } }
       );
     }
     var unused = listed.filter(function (n) {
@@ -3706,7 +4362,15 @@
     listed.concat(used).forEach(function (name, i, all) {
       if (all.indexOf(name) !== i) return;
       if (SECRET_NAME.test(name)) add("warn", "<" + name + "> looks like a secret. Values are saved unencrypted in the reader's browser: tell readers where to get it instead, such as Key Vault.");
-      if (PLACEHOLDER_ALIASES[name]) add("info", "Use <" + PLACEHOLDER_ALIASES[name] + "> instead of <" + name + ">, so values carry across pages.");
+      if (PLACEHOLDER_ALIASES[name]) {
+        var at = state.body.indexOf("<" + name + ">");
+        add("info", "Use <" + PLACEHOLDER_ALIASES[name] + "> instead of <" + name + ">, so values carry across pages.", null, at >= 0 ? { from: at, to: at + name.length + 2 } : null, null, {
+          label: "Use <" + PLACEHOLDER_ALIASES[name] + ">",
+          run: function () {
+            replaceAll("<" + name + ">", "<" + PLACEHOLDER_ALIASES[name] + ">");
+          },
+        });
+      }
     });
     if (values.length && used.length) {
       var firstCode = codeTexts().filter(function (entry) {
@@ -3720,14 +4384,30 @@
       if (b.type !== "tabs") return;
       b.tabs.forEach(function (t) {
         var standard = TAB_ALIASES[t.label.trim().toLowerCase()];
-        if (standard && standard !== t.label.trim()) add("info", "Label the tab “" + standard + "” rather than “" + t.label.trim() + "”, so a reader's choice carries across pages.", b.id, '"' + t.label + '"');
+        if (standard && standard !== t.label.trim()) {
+          add("info", "Label the tab “" + standard + "” rather than “" + t.label.trim() + "”, so a reader's choice carries across pages.", b.id, '"' + t.label + '"', null, {
+            label: "Rename it",
+            run: function () {
+              var i = state.body.indexOf('"' + t.label + '"', b.from);
+              if (i >= 0 && i <= b.to) editBody([{ from: i, to: i + t.label.length + 2, insert: '"' + standard + '"' }]);
+            },
+          });
+        }
       });
     });
 
     var level = 1;
     live.forEach(function (b) {
       if (b.type !== "heading") return;
-      if (b.level > level + 1) add("warn", "This heading skips a level. Use a Section before a Sub-section.", b.id);
+      if (b.level > level + 1) {
+        var fixed = level + 1;
+        add("warn", "This heading skips a level. Use a Section before a Sub-section.", b.id, null, null, {
+          label: "Make it " + new Array(fixed + 1).join("#"),
+          run: function () {
+            editBody([{ from: b.from, to: b.from + b.level, insert: new Array(fixed + 1).join("#") }]);
+          },
+        });
+      }
       level = b.level;
     });
 
@@ -3747,6 +4427,8 @@
         return value;
       });
     });
+
+    sourceChecks(add);
 
     var md = toMarkdown();
     ["images", "files"].forEach(function (kind) {
@@ -3781,6 +4463,276 @@
     return out;
   }
 
+  /* Checks on the Markdown as written, for what reads fine in the Azure
+     DevOps wiki or on GitHub but not on this site (Python-Markdown): lists
+     and tables straight under text, lists nested by two spaces, bare web
+     addresses, and links that go nowhere. */
+
+  // The body's lines, with where each starts and whether it's in a code block.
+  function proseLines(body) {
+    var out = [];
+    var at = 0;
+    var fence = null;
+    lines(body).forEach(function (line) {
+      var f = /^\s*(`{3,}|~{3,})/.exec(line);
+      var code = !!fence;
+      if (fence) {
+        if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.trim().slice(f[1].length).trim()) fence = null;
+      } else if (f) {
+        fence = f[1];
+        code = true;
+      }
+      out.push({ text: line, from: at, code: code });
+      at += line.length + 1;
+    });
+    return out;
+  }
+
+  var LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+\S/;
+
+  function sourceChecks(add) {
+    var ls = proseLines(state.body);
+    var shown = {};
+    // One of each kind is enough to go on with: the rest say how many.
+    function once(kind, level, text, at, fix) {
+      shown[kind] = (shown[kind] || 0) + 1;
+      if (shown[kind] === 1) add(level, text, null, at, "src-" + kind, fix);
+    }
+    function lineAt(i) {
+      return { from: ls[i].from, to: ls[i].from + ls[i].text.length };
+    }
+    function isText(l) {
+      return l && !l.code && l.text.trim() && !/^\s*(#|<|!!!|\?\?\?|===|:\s|>|\||\{)/.test(l.text) && !LIST_ITEM.test(l.text) && !/^\s/.test(l.text);
+    }
+
+    ls.forEach(function (l, i) {
+      if (l.code) return;
+      var prev = ls[i - 1];
+      // A list or table right under a paragraph is read as part of it.
+      if (/^([-*+]|\d+[.)])\s+\S/.test(l.text) && isText(prev)) {
+        once("list-gap", "warn", "This list follows a line of text with no empty line between, so the site shows it as part of that paragraph. Leave an empty line above it.", lineAt(i), gapFix(l.from));
+      }
+      if (/\|/.test(l.text) && ls[i + 1] && RE.tableSep.test(ls[i + 1].text) && /-/.test(ls[i + 1].text) && prev && !prev.code && prev.text.trim() && !/^\s*\|/.test(prev.text)) {
+        once("table-gap", "warn", "This table follows a line of text with no empty line between, so the site doesn't show it as a table. Leave an empty line above it.", lineAt(i), gapFix(l.from));
+      }
+      // Nested by two spaces, as GitHub and the wiki allow; here it's four.
+      var item = LIST_ITEM.exec(l.text);
+      if (item && item[1].length > 0 && item[1].length < 4) {
+        for (var k = i - 1; k >= 0 && ls[k].text.trim() && !ls[k].code; k--) {
+          var up = LIST_ITEM.exec(ls[k].text);
+          if (up && up[1].length < item[1].length) {
+            once("nest", "warn", "This list item is indented by " + plural(item[1].length, "space") + ". The site nests lists by four, so it shows at the same level as the one above. Indent nested items by four spaces.", lineAt(i), { label: "Indent by four", run: function () { reindentList(i); } });
+            break;
+          }
+        }
+      }
+      // Web addresses on their own: text here, not links.
+      var bare = bareUrls(l.text);
+      bare.forEach(function (u) {
+        once("bare-url", "info", "“" + u.url + "” shows as plain text on the site, not a link. Put it in <…>, or make it a link with words of its own (Ctrl+K).", { from: l.from + u.index, to: l.from + u.index + u.url.length }, {
+          label: "Make it a link",
+          run: function () {
+            wrapBareUrls();
+          },
+        });
+      });
+    });
+    if (shown["bare-url"] > 1) patchCount(add, "src-bare-url", shown["bare-url"], "web addresses");
+    if (shown["list-gap"] > 1) patchCount(add, "src-list-gap", shown["list-gap"], "lists");
+    if (shown.nest > 1) patchCount(add, "src-nest", shown.nest, "list items");
+
+    // Links: to pages that aren't on the site, to sections this page
+    // hasn't got, and wiki-style ones from the site's root.
+    var anchors = pageAnchors();
+    var pages = {};
+    data.pages.forEach(function (p) {
+      pages[p.src] = p;
+    });
+    var self = filePath().replace(/^docs\//, "");
+    ls.forEach(function (l) {
+      if (l.code) return;
+      var text = l.text.replace(/`[^`\n]*`/g, function (c) {
+        return new Array(c.length + 1).join(" ");
+      });
+      var re = /(!?)\[[^\]\n]*\]\(\s*<?([^)\s>]+)/g;
+      var m;
+      while ((m = re.exec(text))) checkLink(m[2], !!m[1], { from: l.from + m.index + m[0].length - m[2].length, to: l.from + m.index + m[0].length });
+      // The title is the page's only # heading.
+      if (/^#\s+\S/.test(l.text)) {
+        var from = l.from;
+        once("h1", "warn", "A # heading: the page's title is its only one, and the table of contents starts at ##. Make it a Section.", lineAt(ls.indexOf(l)), {
+          label: "Make it ##",
+          run: function () {
+            if (state.body.slice(from, from + 2) === "# ") editBody([{ from: from, to: from, insert: "#" }]);
+          },
+        });
+      }
+    });
+
+    function checkLink(href, image, at) {
+      if (/^\/?\.attachments\//.test(href) || /\/\.attachments\//.test(href)) {
+        add("warn", href + " is in the Azure DevOps wiki's .attachments folder, which the site doesn't have. Drop the file in here (from the wiki's repository) and the link follows it.", null, at, "attachments");
+        return;
+      }
+      if (image) return;
+      if (href[0] === "#") {
+        if (href.length > 1 && !anchors[href.slice(1)]) add("warn", "There's no section " + href + " on this page. Pick one from the suggestions after ](# .", null, at);
+        return;
+      }
+      if (href[0] === "/" && href[1] !== "/") {
+        var mapped = wikiLink(href);
+        add("warn", href + " starts from the site's root, as wiki links do. Here a link points at the page's .md file" + (mapped ? ", which would be " + mapped : "") + ".", null, at, null, mapped ? { label: "Point it there", run: function () { replaceAt(at, href, mapped); } } : null);
+        return;
+      }
+      if (isExternal(href)) return;
+      var parts = splitHash(href);
+      var target = joinPath(folderPath(), parts[0]);
+      if (/\.md$/.test(target)) {
+        if (!pages[target] && target !== self) add("warn", "Links to " + href + ", which isn't a page on the site. Pick a page from the suggestions (type ]( ), or fix the path.", null, at);
+      } else if (!/^(images|files)\//.test(target) && !/\.\w{2,5}$/.test(target)) {
+        var page = data.pages.filter(function (p) {
+          return p.url === target.replace(/\/?$/, "/") || (target === "" && p.url === "");
+        })[0];
+        if (page) {
+          var rel = relPath(folderPath(), page.src) + parts[1];
+          add("info", "Point the link at the .md file, " + rel + ", rather than the address: the build then checks it still exists.", null, at, null, { label: "Point it there", run: function () { replaceAt(at, href, rel); } });
+        }
+      }
+    }
+
+    // Wiki syntax that came in some other way than Open or paste.
+    var C = convert();
+    if (C && C.looksLikeAdo(state.body)) {
+      var sign = /^\s*\[\[_TO(?:C|SP)_\]\]|^\s*:::\s*mermaid|^\s*>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]|\s=\d*x\d*\)/im.exec(state.body);
+      add("warn", "This page has Azure DevOps wiki syntax the site doesn't read, such as [[_TOC_]], ::: mermaid or > [!NOTE].", null, sign ? { from: sign.index, to: sign.index + sign[0].length } : null, null, { label: "Convert it", run: convertAdoBody });
+    }
+  }
+
+  // "3 lists…" instead of the first one's text, once there are several.
+  function patchCount(add, group, n, what) {
+    // The check was added once; the Checks panel says there are more.
+    add("info", "…and " + (n - 1) + " more " + what + " like that on this page.", null, null, group + "-more");
+  }
+
+  function gapFix(from) {
+    return {
+      label: "Add an empty line",
+      run: function () {
+        editBody([{ from: from, to: from, insert: "\n" }]);
+      },
+    };
+  }
+
+  // Replaces text at a range, if it's still what the check saw there.
+  function replaceAt(at, was, now) {
+    if (state.body.slice(at.from, at.to) !== was) {
+      toast("The page has changed since: look again under Checks.");
+      return;
+    }
+    editBody([{ from: at.from, to: at.to, insert: now }]);
+  }
+
+  function replaceAll(was, now) {
+    var changes = [];
+    var i = -1;
+    while ((i = state.body.indexOf(was, i + 1)) >= 0) changes.push({ from: i, to: i + was.length, insert: now });
+    if (changes.length) editBody(changes);
+  }
+
+  // Web addresses in a line of text that aren't links already: not in
+  // code, <…>, a link's (…) or an HTML attribute. { url, index }.
+  function bareUrls(line) {
+    var out = [];
+    if (/^\s*\[[^\]]+\]:\s/.test(line)) return out;
+    var text = line.replace(/`[^`\n]*`/g, function (c) {
+      return new Array(c.length + 1).join(" ");
+    });
+    var re = /https?:\/\/[^\s<>()"'`\]]+[^\s<>()"'`\].,;:!?]/g;
+    var m;
+    while ((m = re.exec(text))) {
+      var before = text.slice(0, m.index);
+      if (/[(<"'=[]$/.test(before) || /\]\(\s*$/.test(before)) continue;
+      out.push({ url: m[0], index: m.index });
+    }
+    return out;
+  }
+
+  function wrapBareUrls() {
+    var changes = [];
+    proseLines(state.body).forEach(function (l) {
+      if (l.code) return;
+      bareUrls(l.text).forEach(function (u) {
+        changes.push({ from: l.from + u.index, to: l.from + u.index, insert: "<" }, { from: l.from + u.index + u.url.length, to: l.from + u.index + u.url.length, insert: ">" });
+      });
+    });
+    if (changes.length) editBody(changes);
+    toast("Made " + plural(changes.length / 2, "web address", "web addresses") + " into links. Ctrl+Z undoes it.");
+  }
+
+  // The ids this page's sections have: its headings as the build names
+  // them, and any { #id } or id="…" written in.
+  function pageAnchors() {
+    var out = {};
+    if (state.meta.title) out[tocSlug(state.meta.title)] = true;
+    headingsOf(state.body).forEach(function (x) {
+      out[tocSlug(x.text)] = true;
+    });
+    var re = /\{[^}\n]*#([\w-]+)[^}\n]*\}|\bid="([^"]+)"/g;
+    var m;
+    while ((m = re.exec(state.body))) out[m[1] || m[2]] = true;
+    return out;
+  }
+
+  // A list nested by two or three spaces, nested by four: the contiguous
+  // lines around line i, each indent in steps of the smallest one.
+  function reindentList(i) {
+    var ls = proseLines(state.body);
+    var a = i;
+    var b = i;
+    while (a > 0 && ls[a - 1].text.trim() && !ls[a - 1].code) a--;
+    while (b < ls.length - 1 && ls[b + 1].text.trim() && !ls[b + 1].code) b++;
+    var unit = 4;
+    for (var k = a; k <= b; k++) {
+      var s = /^ */.exec(ls[k].text)[0].length;
+      if (s > 0 && s < unit) unit = s;
+    }
+    var changes = [];
+    for (k = a; k <= b; k++) {
+      var pad = /^ */.exec(ls[k].text)[0].length;
+      if (!pad) continue;
+      var next = Math.max(1, Math.floor(pad / unit)) * 4;
+      if (next !== pad) changes.push({ from: ls[k].from, to: ls[k].from + pad, insert: new Array(next + 1).join(" ") });
+    }
+    if (changes.length) editBody(changes);
+  }
+
+  // Placeholders the code uses, into the page's Your values box: added to
+  // the one there is, or a new one before the first command that uses one.
+  function addPlaceholders(names) {
+    var box = liveBlocks().filter(function (b) {
+      return b.type === "values";
+    })[0];
+    if (box) {
+      var b = copy(box);
+      b.items = b.items.filter(function (x) {
+        return x.name.trim();
+      }).concat(names.map(function (n) {
+        return { name: n, label: standardLabel(n) || "" };
+      }));
+      editBody([{ from: box.from, to: box.to, insert: TYPES.values.md(b) }]);
+      return;
+    }
+    var first = codeTexts().filter(function (entry) {
+      return /<[a-z0-9]/i.test(entry.text);
+    })[0];
+    var at = first ? blockById(first.id).from : 0;
+    var md = TYPES.values.md({ items: names.map(function (n) {
+      return { name: n, label: standardLabel(n) || "#{What " + n.replace(/-/g, " ") + " is}" };
+    }) });
+    addHints(md);
+    editBody([{ from: at, to: at, insert: snippetText(md) + "\n\n" }]);
+  }
+
   /* ── Drawing the writer ──
      A bar across the top, the title under it, then the work area: a rail of
      sidebar panels, the Markdown, the preview, and the component form when
@@ -3793,9 +4745,11 @@
   ];
   var SIDES = [
     ["components", "Components", "puzzle-outline"],
+    ["outline", "Outline", "format-list-text"],
     ["page", "Page settings", "file-cog-outline"],
     ["assets", "Images and files", "paperclip"],
     ["checks", "Checks", "check-circle-outline"],
+    ["drafts", "Drafts and versions", "file-multiple-outline"],
   ];
 
   function mount(root) {
@@ -3809,12 +4763,10 @@
     root.innerHTML = "";
     ui = { root: root };
     if (!state) {
-      state = loadDraft();
-      if (!state) {
-        state = newState(emptyMeta(), "");
-        state.assetsLoaded = false;
-      }
+      state = startingDraft();
       loadAssets();
+      setTimeout(collectGarbage, 5000);
+      window.addEventListener("pagehide", flushSave);
     }
 
     root.appendChild(datalists());
@@ -3841,11 +4793,10 @@
     ui.focusButton = iconButton("fullscreen", "Focus: fill the window with the writer (Esc leaves)", false, function () {
       setFocus(!root.classList.contains("writer--focus"));
     });
+    ui.fileInput = fileInput;
     ui.bar = h("div", { class: "writer__bar" }, [
       button("New page", "file-document-plus-outline", "md-button--ghost md-button--sm", openRecipes),
-      button("Open a .md or bundle", "file-upload-outline", "md-button--ghost md-button--sm", function () {
-        fileInput.click();
-      }),
+      button("Open", "folder-open-outline", "md-button--ghost md-button--sm", openDialog),
       fileInput,
       ui.status,
       views,
@@ -3917,20 +4868,42 @@
     ]);
 
     // The Markdown: formatting buttons, then the editor.
+    var tools = [];
+    TOOLS.forEach(function (tool) {
+      var btn = iconButton(tool.icon, tool.label, false, function () {
+        if (!ui.cm && !ui.textarea) return;
+        if (ui.menu && ui.menu.anchor === btn) closeMenu();
+        else if (tool.grid) openTableMenu(btn);
+        else if (tool.menu) openMenu(btn, tool.menu(editorArea()));
+        else tool.run(editorArea());
+      });
+      if (tool.menu || tool.grid) {
+        btn.setAttribute("aria-haspopup", "menu");
+        btn.setAttribute("aria-expanded", "false");
+        btn.classList.add("writer-icon-btn--menu");
+      }
+      tools.push(btn);
+      if (tool.sep) tools.push(h("span", { class: "writer-toolbar__sep", "aria-hidden": "true" }));
+    });
     ui.toolbar = h(
       "div",
       { class: "writer-toolbar writer-editor__tools", role: "toolbar", "aria-label": "Formatting" },
-      TOOLS.map(function (tool) {
-        return iconButton(tool.icon, tool.label, false, function () {
-          if (ui.cm || ui.textarea) tool.run(editorArea());
-        });
-      }).concat([
-        h("span", { class: "writer-editor__hint", html: "Type <kbd>/</kbd> for a component · <kbd>Ctrl</kbd>+<kbd>Space</kbd> suggests · <kbd>Ctrl</kbd>+<kbd>.</kbd> edits one in a form" }),
+      tools.concat([
+        h("button", { type: "button", class: "writer-editor__hint", title: "Keyboard shortcuts and help", onclick: openHelp, html: "Type <kbd>/</kbd> for a component · <kbd>Ctrl</kbd>+<kbd>/</kbd> shortcuts" }),
       ])
     );
     ui.editorHost = h("div", { class: "writer-editor__host" }, [h("div", { class: "writer-editor__loading", text: "Loading the editor…" })]);
     ui.welcome = h("div", { class: "writer-welcome", hidden: true });
-    ui.editorPane = h("section", { class: "writer-editor", "aria-label": "Markdown" }, [ui.toolbar, ui.editorHost, ui.welcome]);
+    ui.footerPos = h("span", { class: "writer-footer__pos" });
+    ui.footerSaved = h("span", { class: "writer-footer__saved" });
+    ui.footer = h("div", { class: "writer-footer" }, [ui.footerPos, ui.footerSaved]);
+    ui.editorPane = h("section", { class: "writer-editor", "aria-label": "Markdown" }, [ui.toolbar, ui.editorHost, ui.footer, ui.welcome]);
+    // "Saved 3 min ago" stays true.
+    if (!footerTicker) {
+      footerTicker = setInterval(function () {
+        if (ui.root && ui.root.isConnected) updateFooter();
+      }, 30000);
+    }
 
     ui.preview = h("div", { class: "writer-preview" });
     ui.preview.addEventListener("click", function (event) {
@@ -3991,6 +4964,7 @@
     });
     root.addEventListener("keydown", function (event) {
       if (event.key === "Escape" && root.classList.contains("writer--focus") && !event.defaultPrevented && !document.querySelector(".writer-dialog[open]")) setFocus(false);
+      globalKeys(event);
     });
 
     drawComponents();
@@ -4002,11 +4976,125 @@
     updateStatus();
     updateWelcome();
     loadScript(MARKED_SRC).then(function () {
-      if (window.marked) window.marked.use({ gfm: true });
+      // Tables and ~~ as the site has them, but not GitHub's links made of
+      // bare web addresses: the site doesn't make those (see pythonish()).
+      if (window.marked && !window.marked.writerReady) {
+        window.marked.use({
+          gfm: true,
+          tokenizer: {
+            url: function () {
+              return undefined;
+            },
+          },
+        });
+        window.marked.writerReady = true;
+      }
       render();
     });
     loadScript(CM_SRC).then(createEditor, fallbackEditor);
+    // Pasting still works without it, as plain text.
+    loadScript(CONVERT_SRC).catch(function () {});
     render();
+    openFromAddress();
+  }
+
+  // write/?edit=<page in docs/>: from a page's "Edit in the page writer"
+  // button. The address loses it once it's open, so a reload doesn't
+  // open the page again.
+  function openFromAddress() {
+    var params = new URLSearchParams(location.search);
+    var src = params.get("edit");
+    if (!src) return;
+    params.delete("edit");
+    var rest = params.toString();
+    history.replaceState(history.state, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+    openSitePage(src.replace(/^\/+/, ""));
+  }
+
+  /* ── Open: a page on the site, or a file ── */
+
+  function draftFor(path) {
+    var ix = readIndex();
+    return ix.list.filter(function (e) {
+      return e.path === path;
+    })[0];
+  }
+
+  function openDialog() {
+    var node;
+    var search = h("input", { class: "writer-input", type: "search", placeholder: "Find a page by its title or file name", "aria-label": "Find a page on this site", autocomplete: "off" });
+    var list = h("div", { class: "writer-pages", role: "listbox", "aria-label": "Pages on this site" });
+    var shown = [];
+    var chosen = 0;
+    function draw() {
+      var words = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      shown = data.pages.filter(function (p) {
+        var hay = (p.title + " " + p.src).toLowerCase();
+        return words.every(function (w) {
+          return hay.indexOf(w) >= 0;
+        });
+      }).slice(0, 100);
+      chosen = Math.min(chosen, Math.max(0, shown.length - 1));
+      list.innerHTML = "";
+      shown.forEach(function (p, i) {
+        var drafted = draftFor("docs/" + p.src);
+        list.appendChild(
+          h(
+            "button",
+            {
+              type: "button",
+              class: "writer-page" + (i === chosen ? " writer-page--chosen" : ""),
+              role: "option",
+              "aria-selected": i === chosen ? "true" : "false",
+              onclick: function () {
+                go(p);
+              },
+            },
+            [h("span", { class: "writer-page__title", text: p.title }), h("code", { class: "writer-page__path", text: p.src }), drafted ? h("span", { class: "writer-title__tag", title: "You have a draft of this page", text: "Draft" }) : null]
+          )
+        );
+      });
+      if (!shown.length) list.appendChild(h("div", { class: "writer-needs__none", text: "No page matches. To add a new page, use New page." }));
+    }
+    function go(p) {
+      node.close();
+      openSitePage(p.src);
+    }
+    search.addEventListener("input", function () {
+      chosen = 0;
+      draw();
+    });
+    search.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        chosen = Math.max(0, Math.min(shown.length - 1, chosen + (event.key === "ArrowDown" ? 1 : -1)));
+        draw();
+        var el = list.children[chosen];
+        if (el) el.scrollIntoView({ block: "nearest" });
+      } else if (event.key === "Enter" && shown[chosen]) {
+        event.preventDefault();
+        go(shown[chosen]);
+      }
+    });
+    var fromSite = data.sources
+      ? [field("A page on this site", search, null, "Its Markdown opens in a draft of its own. Add to site then makes it a change to that page."), list]
+      : [h("p", { class: "writer-dialog__foot", text: "This site doesn't publish its pages' Markdown (extra.writer.sources in mkdocs.yml), so open the .md file from your copy of the repository." })];
+    node = dialog(
+      "Open a page",
+      fromSite.concat([
+        h("div", { class: "writer-side__group", text: "Or from your computer" }),
+        h("div", { class: "writer-row writer-row--center" }, [
+          button("Choose a file…", "file-upload-outline", "md-button--sm", function () {
+            node.close();
+            ui.fileInput.click();
+          }),
+          h("span", { class: "writer-field__hint", text: "A .md file, a bundle (.zip) from this page, or a page from the Azure DevOps wiki. You can also drop one on the writer." }),
+        ]),
+      ])
+    );
+    node.classList.add("writer-dialog--wide");
+    draw();
+    search.focus();
   }
 
   function wide() {
@@ -4050,6 +5138,8 @@
     if (ui.side === "page") drawSetup();
     if (ui.side === "assets") drawAssets(true);
     if (ui.side === "checks") renderChecks(runChecks());
+    if (ui.side === "outline") drawOutline(true);
+    if (ui.side === "drafts") drawDrafts();
     if (ui.side === "components" && ui.componentSearch && document.activeElement === document.body) ui.componentSearch.focus();
     if (ui.cm) ui.cm.requestMeasure();
   }
@@ -4263,15 +5353,15 @@
     box.innerHTML = "";
     box.appendChild(
       h("div", { class: "writer-row" }, [
-        button("Upload an image", "image-outline", "md-button--sm", function () {
-          pickImage(function (name) {
-            toast("Uploaded " + name + ". Drag it into the Markdown, or use its + button.");
-          });
+        button("Upload images", "image-outline", "md-button--sm", function () {
+          pickImage(function (name, linked) {
+            toast(linked ? "Uploaded " + name + ", and the page's links to the wiki's copy point at it now." : "Uploaded " + name + ". Drag it into the Markdown, or use its + button.");
+          }, true);
         }),
-        button("Attach a file", "paperclip", "md-button--ghost md-button--sm", function () {
-          pickFile(function (name) {
-            toast("Attached " + name + ". Drag it into the Markdown where readers should download it, or use its + button.");
-          });
+        button("Attach files", "paperclip", "md-button--ghost md-button--sm", function () {
+          pickFile(function (name, linked) {
+            toast(linked ? "Attached " + name + ", and the page's links to the wiki's copy point at it now." : "Attached " + name + ". Drag it into the Markdown where readers should download it, or use its + button.");
+          }, true);
         }),
       ])
     );
@@ -4306,6 +5396,11 @@
               if (r.kind === "images") insertSnippet("![#{Describe what the image shows}](" + imageRel(r.name) + ")", null);
               else insertFileLink(editorArea(), r.name);
             }),
+            r.kind === "images" && editableImage(r.name)
+              ? iconButton("image-edit-outline", "Crop it, or hide names and IDs in it", false, function () {
+                  openImageEditor(r.name);
+                })
+              : null,
             iconButton("pencil-outline", "Rename", false, function () {
               openRename(r.kind, r.name);
             }),
@@ -4351,9 +5446,10 @@
     if (!checks.length) list.appendChild(h("li", { class: "writer-checks__item writer-checks__item--ok" }, [icon("check-circle-outline"), h("span", { text: "Nothing to fix that can be checked automatically." })]));
     checks.forEach(function (c) {
       var range = checkRange(c);
-      var item = h("li", { class: "writer-checks__item writer-checks__item--" + c.level }, [icon(c.level === "warn" ? "alert-outline" : "information-outline"), h("span", { text: c.text })]);
+      var actions = h("span", { class: "writer-checks__actions" });
+      var item = h("li", { class: "writer-checks__item writer-checks__item--" + c.level }, [icon(c.level === "warn" ? "alert-outline" : "information-outline"), h("span", { class: "writer-checks__body" }, [h("span", { text: c.text }), actions])]);
       if (range) {
-        item.appendChild(
+        actions.appendChild(
           h("button", {
             type: "button",
             class: "writer-link-btn",
@@ -4365,9 +5461,22 @@
           })
         );
       } else if (/title/.test(c.text)) {
-        item.appendChild(h("button", { type: "button", class: "writer-link-btn", text: "Show", onclick: function () { ui.title.focus(); } }));
+        actions.appendChild(h("button", { type: "button", class: "writer-link-btn", text: "Show", onclick: function () { ui.title.focus(); } }));
       } else if (/Page settings/.test(c.text)) {
-        item.appendChild(h("button", { type: "button", class: "writer-link-btn", text: "Show", onclick: function () { openSide("page"); } }));
+        actions.appendChild(h("button", { type: "button", class: "writer-link-btn", text: "Show", onclick: function () { openSide("page"); } }));
+      }
+      if (c.fix) {
+        actions.appendChild(
+          h("button", {
+            type: "button",
+            class: "writer-link-btn writer-link-btn--fix",
+            text: c.fix.label,
+            onclick: function () {
+              c.fix.run();
+              changed();
+            },
+          })
+        );
       }
       list.appendChild(item);
     });
@@ -4405,6 +5514,646 @@
     return { from: b.from, to: b.from + (nl < 0 ? text.length : nl) };
   }
 
+  /* ── Help: the shortcuts, and coming from the Azure DevOps wiki ── */
+
+  var MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+  // "Ctrl+Shift+P" as keys, with Mac's names on a Mac.
+  function keysNode(text) {
+    return h(
+      "span",
+      { class: "writer-keys" },
+      text.split(" / ").map(function (combo, i) {
+        return h("span", { class: "writer-keys__combo" }, [i ? h("span", { class: "writer-keys__or", text: "or" }) : null].concat(
+          combo.split("+").map(function (key) {
+            var name = MAC ? { Ctrl: "⌘", Alt: "⌥", Shift: "⇧" }[key] || key : key;
+            return h("kbd", { text: name });
+          })
+        ));
+      })
+    );
+  }
+
+  // " / " between keys that do the same thing.
+  var SHORTCUTS = [
+    ["Writing", [
+      ["Bold", "Ctrl+B"],
+      ["Italic", "Ctrl+I"],
+      ["Inline code", "Ctrl+E"],
+      ["Strikethrough", "Ctrl+Shift+X"],
+      ["Highlight", "Ctrl+Shift+H"],
+      ["Link to a page or website", "Ctrl+K"],
+      ["Section heading", "Ctrl+Alt+2"],
+      ["Sub-section heading", "Ctrl+Alt+3"],
+      ["Minor heading", "Ctrl+Alt+4"],
+      ["Back to a paragraph", "Ctrl+Alt+0"],
+      ["Numbered list", "Ctrl+Shift+7"],
+      ["Bulleted list", "Ctrl+Shift+8"],
+      ["Checklist", "Ctrl+Shift+9"],
+      ["Next list item; on an empty one, end the list", "Enter"],
+    ]],
+    ["Components", [
+      ["Pick a component to add", "/"],
+      ["Suggestions: links, icons, placeholders, languages", "Ctrl+Space"],
+      ["Next thing to fill in", "Tab"],
+      ["Previous thing to fill in", "Shift+Tab"],
+      ["Edit the component at the cursor in a form", "Ctrl+."],
+      ["Close the form", "Esc"],
+    ]],
+    ["Tables", [
+      ["Next cell, lining the columns up", "Tab"],
+      ["Previous cell", "Shift+Tab"],
+      ["A new row: Tab in the last cell", "Tab"],
+    ]],
+    ["Editing", [
+      ["Undo", "Ctrl+Z"],
+      ["Redo", "Ctrl+Y / Ctrl+Shift+Z"],
+      ["Find, and find and replace", "Ctrl+F"],
+      ["Select the next match too", "Ctrl+D"],
+      ["Move the line up or down", "Alt+↑ / Alt+↓"],
+      ["Indent or outdent", "Tab / Shift+Tab"],
+      ["Paste as plain text, as it was copied", "Ctrl+Shift+V"],
+    ]],
+    ["The writer", [
+      ["Every command, by name", "Ctrl+Shift+P / F1"],
+      ["Save now (it saves as you type anyway)", "Ctrl+S"],
+      ["These shortcuts", "Ctrl+/"],
+      ["Leave focus mode", "Esc"],
+    ]],
+  ];
+
+  var FROM_ADO = [
+    ["<code>[[_TOC_]]</code>", "Nothing: every page shows its table of contents by itself."],
+    ["<code>::: mermaid</code> … <code>:::</code>", "A Diagram: <code>``` mermaid</code> … <code>```</code>."],
+    ["<code>&gt; [!NOTE]</code>, <code>&gt; [!WARNING]</code>", "Callouts, with more kinds: type <kbd>/</kbd> and pick one."],
+    ["<code>![](/.attachments/x.png =500x)</code>", "Drop the image in and it comes with the page. A width is <code>{ width=\"500\" }</code>."],
+    ["Pasting from Word, Teams or a web page", "The same: headings, lists, tables, links and screenshots come across as Markdown."],
+    ["A list or table straight under a line of text", "Leave an empty line above it, or it's read as part of that paragraph. The checks point it out."],
+    ["Nested list items indented by 2 spaces", "Indent them by 4. The checks point it out and fix it."],
+    ["The page tree", "Folders in <code>docs/</code>: a page's folder is its tab. Choose it under Page settings."],
+    ["Edit on a page", "The pencil at the top of every page opens it here."],
+    ["Revisions", "Drafts and versions, in the sidebar, while you write. Once it's published, the pull request."],
+  ];
+
+  function openHelp() {
+    var old = document.querySelector(".writer-dialog--help[open]");
+    closeDialogs();
+    // Ctrl+/ again closes it.
+    if (old) return;
+    var groups = SHORTCUTS.map(function (group) {
+      return h("div", { class: "writer-shortcuts__group" }, [
+        h("div", { class: "writer-side__group", text: group[0] }),
+        h(
+          "dl",
+          { class: "writer-shortcuts" },
+          group[1].reduce(function (all, row) {
+            return all.concat([h("dt", { text: row[0] }), h("dd", {}, [keysNode(row[1])])]);
+          }, [])
+        ),
+      ]);
+    });
+    var ado = h("table", { class: "writer-ado" }, [
+      h("thead", {}, [h("tr", {}, [h("th", { text: "In the Azure DevOps wiki" }), h("th", { text: "Here" })])]),
+      h(
+        "tbody",
+        {},
+        FROM_ADO.map(function (row) {
+          return h("tr", {}, [h("td", { html: row[0] }), h("td", { html: row[1] })]);
+        })
+      ),
+    ]);
+    var node = dialog("Shortcuts and help", [
+      h("div", { class: "writer-shortcuts__grid" }, groups),
+      h("div", { class: "writer-side__group", text: "Coming from the Azure DevOps wiki?" }),
+      h("p", { class: "writer-dialog__foot", text: "Open a page exported from the wiki, or paste one in, and its wiki syntax is turned into this site's. The rest works the way you'd expect:" }),
+      ado,
+      h("p", { class: "writer-dialog__foot" }, ["More in the ", h("a", { href: BASE + "writing-guide/", target: "_blank", rel: "noopener", text: "writing guide" }), " and ", h("a", { href: BASE + "writing-guide/choosing-components/", target: "_blank", rel: "noopener", text: "Choosing components" }), "."]),
+    ]);
+    node.classList.add("writer-dialog--wide", "writer-dialog--help");
+  }
+
+  /* ── The command palette: every action, component, draft and page, by
+     name ── */
+
+  function commands() {
+    var out = [];
+    function add(group, label, run, keys, words) {
+      out.push({ group: group, label: label, run: run, keys: keys || "", words: (label + " " + (words || "") + " " + group).toLowerCase() });
+    }
+    add("Page", "New page from a recipe", openRecipes, "", "create start template");
+    add("Page", "New empty draft", newDraft, "", "blank create");
+    add("Page", "Open a page on this site", openDialog, "", "edit existing");
+    add("Page", "Open a file from your computer", function () { ui.fileInput.click(); }, "", "md markdown zip bundle import azure devops wiki");
+    add("Page", "Download bundle (.zip)", downloadBundle, "", "export save publish");
+    add("Page", "Add to site: how to publish", openPublish, "", "publish pull request pipeline azure devops");
+    add("Page", "Copy the Markdown", function () { copyText(toMarkdown(), "Markdown copied: the whole file, front matter and title included."); }, "", "clipboard");
+    add("Page", "Download the .md on its own", download, "", "export save");
+    add("Page", "Clear the page", clearPage, "", "delete empty reset");
+    if (state.meta.original) add("Page", "Compare with the page as opened", function () { showDiff(state.meta.original, toMarkdown(), "As opened", "Now"); }, "", "diff changes");
+    var C = convert();
+    if (C && C.looksLikeAdo(state.body)) add("Page", "Convert Azure DevOps wiki syntax", convertAdoBody, "", "toc mermaid note attachments");
+    add("View", "Markdown only", function () { setView("markdown"); });
+    add("View", "Side by side", function () { setView("split"); }, "", "split preview");
+    add("View", "Preview only", function () { setView("preview"); });
+    add("View", ui.root.classList.contains("writer--focus") ? "Leave focus mode" : "Focus mode: fill the window", function () { setFocus(!ui.root.classList.contains("writer--focus")); }, "", "fullscreen zen");
+    SIDES.forEach(function (s) {
+      add("View", "Show " + s[1].toLowerCase().replace(/^./, function (c) { return c.toUpperCase(); }), function () { openSide(s[0]); }, "", "sidebar panel");
+    });
+    add("Help", "Keyboard shortcuts and help", openHelp, "Ctrl+/", "keys azure devops wiki");
+    add("Edit", "Edit the component at the cursor in a form", function () {
+      var b = ui.cm && blockAt(ui.cm.state.selection.main.head);
+      if (b && b.type !== "text") openForm(b);
+      else toast("Put the cursor in a component, such as steps, a callout or tabs, to edit it in a form.");
+    }, "Ctrl+.");
+    add("Edit", "Line up the table's columns", formatTableAt, "", "format table align");
+    add("Edit", "Find and replace", function () { if (ui.cm) window.CM.openSearchPanel(ui.cm); }, "Ctrl+F", "search");
+    TOOLS.forEach(function (tool) {
+      if (tool.grid || tool.menu) return;
+      var m = /^(.*?)(?: \((Ctrl[^)]*)\))?$/.exec(tool.label.split(":")[0]);
+      add("Format", m[1], function () { if (ui.cm || ui.textarea) tool.run(editorArea()); }, m[2] || "");
+    });
+    HEADINGS.forEach(function (x) {
+      add("Format", x[0] ? x[1].replace(/( heading)?$/, " heading") : "Paragraph (not a heading)", function () { setHeading(x[0])(editorArea()); }, x[2]);
+    });
+    NEEDS.forEach(function (n) {
+      add("Insert", n.name, function () { insertNeed(n, null, false); }, "", n.need + " " + n.type + " component");
+    });
+    [[2, 2], [3, 3], [4, 4]].forEach(function (size) {
+      add("Insert", "Table, " + size[0] + " columns", function () { insertSnippet(tableSnippet(size[0], size[1]), null); }, "", "grid");
+    });
+    readIndex().list.slice().sort(function (a, b) {
+      return (b.updated || 0) - (a.updated || 0);
+    }).forEach(function (e) {
+      if (e.id !== state.id) add("Drafts", "Switch to " + (e.title || "the untitled draft"), function () { switchDraft(e.id); }, "", (e.path || "") + " draft");
+    });
+    if (data.sources) {
+      data.pages.forEach(function (p) {
+        add("Pages", "Open “" + p.title + "”", function () { openSitePage(p.src); }, "", p.src + " edit");
+      });
+    }
+    return out;
+  }
+
+  // Before the palette or the shortcuts: any other dialog of the writer's.
+  function closeDialogs() {
+    closeMenu();
+    document.querySelectorAll(".writer-dialog[open]").forEach(function (node) {
+      node.close();
+    });
+  }
+
+  function openPalette() {
+    closeDialogs();
+    var all = commands();
+    var input = h("input", { class: "writer-input writer-palette__input", type: "search", placeholder: "Type a command, a component or a page", "aria-label": "Command", autocomplete: "off" });
+    var list = h("div", { class: "writer-palette__list", role: "listbox", "aria-label": "Commands" });
+    var shown = [];
+    var chosen = 0;
+    function draw() {
+      var words = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      // Pages only once something's typed: there are a lot of them.
+      shown = all.filter(function (c) {
+        if (!words.length) return c.group !== "Pages" && c.group !== "Drafts";
+        return words.every(function (w) {
+          return c.words.indexOf(w) >= 0;
+        });
+      });
+      if (words.length) {
+        shown.sort(function (a, b) {
+          var pa = a.label.toLowerCase().indexOf(words[0]) === 0 ? 0 : 1;
+          var pb = b.label.toLowerCase().indexOf(words[0]) === 0 ? 0 : 1;
+          return pa - pb || (a.group === "Pages") - (b.group === "Pages");
+        });
+      }
+      shown = shown.slice(0, 60);
+      chosen = Math.min(chosen, Math.max(0, shown.length - 1));
+      list.innerHTML = "";
+      var group = "";
+      shown.forEach(function (c, i) {
+        if (c.group !== group && !words.length) {
+          group = c.group;
+          list.appendChild(h("div", { class: "writer-needs__group", text: group }));
+        }
+        list.appendChild(
+          h(
+            "button",
+            {
+              type: "button",
+              class: "writer-page" + (i === chosen ? " writer-page--chosen" : ""),
+              role: "option",
+              "aria-selected": i === chosen ? "true" : "false",
+              onclick: function () {
+                go(c);
+              },
+            },
+            [h("span", { class: "writer-page__title", text: c.label }), words.length ? h("span", { class: "writer-palette__group", text: c.group }) : null, c.keys ? keysNode(c.keys) : null]
+          )
+        );
+      });
+      if (!shown.length) list.appendChild(h("div", { class: "writer-needs__none", text: "Nothing matches." }));
+    }
+    function go(c) {
+      node.close();
+      setTimeout(c.run, 0);
+    }
+    input.addEventListener("input", function () {
+      chosen = 0;
+      draw();
+    });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        chosen = Math.max(0, Math.min(shown.length - 1, chosen + (event.key === "ArrowDown" ? 1 : -1)));
+        draw();
+        var el = list.querySelector(".writer-page--chosen");
+        if (el) el.scrollIntoView({ block: "nearest" });
+      } else if (event.key === "Enter" && shown[chosen]) {
+        event.preventDefault();
+        go(shown[chosen]);
+      }
+    });
+    var node = dialog("Commands", [input, list]);
+    node.classList.add("writer-dialog--palette");
+    draw();
+    input.focus();
+  }
+
+  // The page's Azure DevOps wiki syntax, turned into this site's.
+  function convertAdoBody() {
+    var C = convert();
+    if (!C) return;
+    var res = C.fromAdo(state.body, { link: wikiLink });
+    if (!res.changed) {
+      toast("Nothing to convert.");
+      return;
+    }
+    editBody([{ from: 0, to: state.body.length, insert: C.demoteHeadings(res.md) }]);
+    changed();
+    toast("Converted: " + res.notes.join("; ") + ". Ctrl+Z undoes it.");
+  }
+
+  /* ── Sidebar: drafts, and the versions of the one showing ── */
+
+  function drawDrafts() {
+    var box = ui.sides && ui.sides.drafts;
+    if (!box) return;
+    box.innerHTML = "";
+    var ix = readIndex();
+    var list = ix.list.slice().sort(function (a, b) {
+      return (b.updated || 0) - (a.updated || 0);
+    });
+    box.appendChild(
+      h("div", { class: "writer-row" }, [
+        button("New draft", "file-document-plus-outline", "md-button--sm", newDraft),
+        button("Open a page", "folder-open-outline", "md-button--ghost md-button--sm", openDialog),
+      ])
+    );
+    var rows = h("div", { class: "writer-drafts" });
+    if (!list.length) rows.appendChild(h("div", { class: "writer-block__help", text: "Nothing yet. Each page you write or open is kept here, in this browser, until you delete it." }));
+    list.forEach(function (e) {
+      var current = e.id === state.id;
+      rows.appendChild(
+        h("div", { class: "writer-draft" + (current ? " writer-draft--current" : "") }, [
+          h(
+            "button",
+            {
+              type: "button",
+              class: "writer-draft__open",
+              title: current ? "Showing now" : "Open this draft",
+              "aria-current": current ? "true" : null,
+              onclick: function () {
+                switchDraft(e.id);
+              },
+            },
+            [
+              h("span", { class: "writer-draft__title", text: e.title || "Untitled" }),
+              h("span", { class: "writer-draft__meta", text: (e.path ? e.path.replace(/^docs\//, "") + " · " : "") + when(e.updated) + (e.words ? " · " + plural(e.words, "word") : "") }),
+            ]
+          ),
+          iconButton("trash-can-outline", "Delete this draft", false, function () {
+            deleteDraft(e.id);
+          }),
+        ])
+      );
+    });
+    box.appendChild(rows);
+
+    box.appendChild(h("div", { class: "writer-side__group", text: "Earlier versions of this draft" }));
+    var versions = h("div", { class: "writer-versions" }, [h("div", { class: "writer-block__help", text: "Loading…" })]);
+    box.appendChild(versions);
+    if (state.meta.original) {
+      box.appendChild(
+        button("Compare with the page as opened", "file-compare", "md-button--ghost md-button--sm", function () {
+          showDiff(state.meta.original, toMarkdown(), "As opened", "Now");
+        })
+      );
+    }
+    box.appendChild(h("p", { class: "writer-side__foot", text: "Drafts live in this browser only. To carry on elsewhere, download the bundle and open it there." }));
+    var mine = state.id;
+    versionsOf(mine).then(
+      function (found) {
+        if (state.id !== mine || !versions.isConnected) return;
+        versions.innerHTML = "";
+        if (!found.length) {
+          versions.appendChild(h("div", { class: "writer-block__help", text: "None yet. While you write, the page as it was is kept every few minutes, to compare with or go back to." }));
+          return;
+        }
+        found.forEach(function (v) {
+          versions.appendChild(
+            h("div", { class: "writer-version" }, [
+              h("span", { class: "writer-version__text" }, [
+                h("span", { class: "writer-version__when", text: when(v.at) }),
+                h("span", { class: "writer-draft__meta", text: plural(v.words || 0, "word") + (v.title && v.title !== state.meta.title ? " · “" + v.title + "”" : "") }),
+              ]),
+              h("button", {
+                type: "button",
+                class: "writer-link-btn",
+                text: "Compare",
+                onclick: function () {
+                  showDiff(versionMarkdown(v), toMarkdown(), "From " + when(v.at), "Now", v);
+                },
+              }),
+              h("button", {
+                type: "button",
+                class: "writer-link-btn",
+                text: "Restore",
+                onclick: function () {
+                  restoreVersion(v);
+                },
+              }),
+            ])
+          );
+        });
+      },
+      function () {
+        versions.innerHTML = "";
+        versions.appendChild(h("div", { class: "writer-block__help", text: "This browser can't keep earlier versions." }));
+      }
+    );
+  }
+
+  function versionMarkdown(v) {
+    try {
+      return toMarkdown(JSON.parse(v.json));
+    } catch (e) {
+      return "";
+    }
+  }
+
+  /* Comparing two versions of the page, line by line. */
+
+  // Each line of a and b, marked " " (in both), "-" (a only) or "+" (b only).
+  function diffLines(a, b) {
+    var x = lines(a);
+    var y = lines(b);
+    // Most changes are in one place: the lines the same at each end first.
+    var start = 0;
+    while (start < x.length && start < y.length && x[start] === y[start]) start++;
+    var endX = x.length;
+    var endY = y.length;
+    while (endX > start && endY > start && x[endX - 1] === y[endY - 1]) {
+      endX--;
+      endY--;
+    }
+    var mx = x.slice(start, endX);
+    var my = y.slice(start, endY);
+    var n = mx.length;
+    var m = my.length;
+    var middle = [];
+    var i;
+    var j;
+    if (n * m > 4e6) {
+      mx.forEach(function (l) {
+        middle.push(["-", l]);
+      });
+      my.forEach(function (l) {
+        middle.push(["+", l]);
+      });
+    } else {
+      // The longest run of lines the two share, from the end backwards.
+      var dp = [];
+      for (i = n; i >= 0; i--) {
+        dp[i] = new Uint32Array(m + 1);
+        if (i === n) continue;
+        for (j = m - 1; j >= 0; j--) dp[i][j] = mx[i] === my[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+      i = 0;
+      j = 0;
+      while (i < n && j < m) {
+        if (mx[i] === my[j]) {
+          middle.push([" ", mx[i]]);
+          i++;
+          j++;
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) middle.push(["-", mx[i++]]);
+        else middle.push(["+", my[j++]]);
+      }
+      while (i < n) middle.push(["-", mx[i++]]);
+      while (j < m) middle.push(["+", my[j++]]);
+    }
+    function same(l) {
+      return [" ", l];
+    }
+    return x.slice(0, start).map(same).concat(middle, x.slice(endX).map(same));
+  }
+
+  // v: a version, to offer Restore beside the comparison.
+  function showDiff(a, b, labelA, labelB, v) {
+    var rows = diffLines(a, b);
+    var added = 0;
+    var removed = 0;
+    rows.forEach(function (r) {
+      if (r[0] === "+") added++;
+      if (r[0] === "-") removed++;
+    });
+    var box = h("div", { class: "writer-diff" });
+    // Changed lines with three either side; the rest folded away.
+    var keep = rows.map(function () {
+      return false;
+    });
+    rows.forEach(function (r, i) {
+      if (r[0] === " ") return;
+      for (var k = Math.max(0, i - 3); k <= Math.min(rows.length - 1, i + 3); k++) keep[k] = true;
+    });
+    var skipped = 0;
+    function fold() {
+      if (!skipped) return;
+      box.appendChild(h("div", { class: "writer-diff__fold", text: "⋯ " + plural(skipped, "line") + " the same" }));
+      skipped = 0;
+    }
+    rows.forEach(function (r, i) {
+      if (!keep[i]) {
+        skipped++;
+        return;
+      }
+      fold();
+      box.appendChild(h("div", { class: "writer-diff__line writer-diff__line--" + (r[0] === "+" ? "add" : r[0] === "-" ? "del" : "same") }, [h("span", { class: "writer-diff__mark", "aria-hidden": "true", text: r[0] }), h("span", { class: "sr-only", text: r[0] === "+" ? "Added: " : r[0] === "-" ? "Removed: " : "" }), h("span", { text: r[1] || " " })]));
+    });
+    fold();
+    if (!added && !removed) box.appendChild(h("div", { class: "writer-diff__fold", text: "No differences." }));
+    var node = dialog(
+      labelA + " → " + labelB,
+      [h("p", { class: "writer-dialog__foot" }, [h("span", { class: "writer-diff__stat writer-diff__stat--add", text: "+" + added }), " ", h("span", { class: "writer-diff__stat writer-diff__stat--del", text: "−" + removed }), " lines. Removed lines are what " + labelA.toLowerCase().replace(/^from /, "the version from ") + " had; added lines are what's there now."]), box],
+      v
+        ? [
+            button("Restore this version", "backup-restore", "md-button--primary md-button--sm", function () {
+              node.close();
+              restoreVersion(v);
+            }),
+          ]
+        : null
+    );
+    node.classList.add("writer-dialog--wide");
+  }
+
+  /* ── Sidebar: the page's outline ── */
+
+  // The body's ## to ###### headings outside code: { level, text, from }
+  // with from the start of the heading's line.
+  function headingsOf(body) {
+    var out = [];
+    var at = 0;
+    var fence = null;
+    lines(body).forEach(function (line) {
+      var f = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.trim().slice(f[1].length).trim()) fence = null;
+      } else if (f) fence = f[1];
+      else {
+        var m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+        if (m) out.push({ level: m[1].length, text: m[2].replace(/<[^>]+>|\{[^}]*\}\s*$/g, "").trim(), from: at });
+      }
+      at += line.length + 1;
+    });
+    return out;
+  }
+
+  // A heading's section: its line to the next heading at its level or above.
+  function sectionOf(heads, i) {
+    var end = state.body.length;
+    for (var k = i + 1; k < heads.length; k++) {
+      if (heads[k].level <= heads[i].level) {
+        end = heads[k].from;
+        break;
+      }
+    }
+    return { from: heads[i].from, to: end };
+  }
+
+  // Swaps a section with the one before or after it at the same level,
+  // subsections and all.
+  function moveSection(i, dir) {
+    var heads = headingsOf(state.body);
+    var me = heads[i];
+    var k = i + dir;
+    while (k >= 0 && k < heads.length && heads[k].level > me.level) k += dir;
+    if (k < 0 || k >= heads.length || heads[k].level !== me.level) return;
+    var first = sectionOf(heads, Math.min(i, k));
+    var second = sectionOf(heads, Math.max(i, k));
+    var a = state.body.slice(first.from, first.to).replace(/\s+$/, "");
+    var b = state.body.slice(second.from, second.to);
+    var tail = /\s*$/.exec(b)[0];
+    b = b.replace(/\s+$/, "");
+    editBody([{ from: first.from, to: second.to, insert: b + "\n\n" + a + tail }]);
+    goTo(dir < 0 ? first.from : first.from + b.length + 2);
+    toast("Moved “" + me.text + "” " + (dir < 0 ? "up" : "down") + ". Ctrl+Z puts it back.");
+  }
+
+  function drawOutline(force) {
+    var box = ui.sides && ui.sides.outline;
+    if (!box || ui.side !== "outline") return;
+    var heads = headingsOf(state.body);
+    var head = ui.cm ? ui.cm.state.selection.main.head : 0;
+    var active = -1;
+    heads.forEach(function (x, i) {
+      if (x.from <= head) active = i;
+    });
+    var sig = active + "|" + heads.map(function (x) {
+      return x.level + x.text + ":" + x.from;
+    }).join("|") + "|" + wordCount(state.body);
+    if (!force && sig === ui.outlineSig) return;
+    ui.outlineSig = sig;
+    box.innerHTML = "";
+    var list = h("div", { class: "writer-outline" });
+    if (!heads.length) list.appendChild(h("div", { class: "writer-block__help", text: "No headings yet. Headings (## Section) split the page up, and show here and in the page's table of contents." }));
+    var min = Math.min.apply(null, heads.map(function (x) {
+      return x.level;
+    }).concat([2]));
+    heads.forEach(function (x, i) {
+      var siblings = function (dir) {
+        var k = i + dir;
+        while (k >= 0 && k < heads.length && heads[k].level > x.level) k += dir;
+        return k >= 0 && k < heads.length && heads[k].level === x.level;
+      };
+      list.appendChild(
+        h("div", { class: "writer-outline__item" + (i === active ? " writer-outline__item--active" : ""), style: "--depth:" + Math.max(0, x.level - min) }, [
+          h("button", {
+            type: "button",
+            class: "writer-outline__link" + (x.level === 1 ? " writer-outline__link--warn" : ""),
+            title: x.level === 1 ? "A # heading: the title is the page's only one" : "Go to this heading",
+            text: x.text,
+            onclick: function () {
+              if (ui.view === "preview") setView(wide() ? "split" : "markdown");
+              goTo(x.from, x.from);
+            },
+          }),
+          iconButton("arrow-up", "Move this section up", !siblings(-1), function () {
+            moveSection(i, -1);
+          }),
+          iconButton("arrow-down", "Move this section down", !siblings(1), function () {
+            moveSection(i, 1);
+          }),
+        ])
+      );
+    });
+    box.appendChild(list);
+    var blocks = readBlocks();
+    function count(type) {
+      return blocks.filter(function (b) {
+        return b.type === type;
+      }).length;
+    }
+    var words = wordCount(state.body);
+    var images = (state.body.match(/!\[[^\]]*\]\(/g) || []).length;
+    box.appendChild(h("div", { class: "writer-side__group", text: "This page" }));
+    box.appendChild(
+      h("dl", { class: "writer-stats" }, [
+        ["Words", words.toLocaleString("en-GB")],
+        ["Reading time", words ? "about " + plural(Math.max(1, Math.round(words / 220)), "minute") : "—"],
+        ["Headings", heads.length],
+        ["Code blocks", count("code")],
+        ["Images", images],
+        ["Components", blocks.filter(function (b) { return b.type !== "text" && b.type !== "heading" && b.type !== "code"; }).length],
+      ].reduce(function (all, pair) {
+        return all.concat([h("dt", { text: pair[0] }), h("dd", { text: String(pair[1]) })]);
+      }, []))
+    );
+  }
+
+  /* ── The line under the Markdown: where the cursor is, how long the page
+     is, and when it was last saved ── */
+
+  var footerTicker = null;
+  var wordsCache = { body: null, n: 0 };
+  function bodyWords() {
+    if (wordsCache.body !== state.body) wordsCache = { body: state.body, n: wordCount(state.body) };
+    return wordsCache.n;
+  }
+
+  function updateFooter() {
+    if (!ui.footer) return;
+    var parts = [];
+    if (ui.cm) {
+      var sel = ui.cm.state.selection.main;
+      var line = ui.cm.state.doc.lineAt(sel.head);
+      parts.push("Ln " + line.number + ", Col " + (sel.head - line.from + 1) + (sel.empty ? "" : " (" + plural(sel.to - sel.from, "character") + " selected)"));
+    }
+    var words = bodyWords();
+    parts.push(plural(words, "word") + (words >= 200 ? " · " + Math.max(1, Math.round(words / 220)) + " min read" : ""));
+    ui.footerPos.textContent = parts.join(" · ");
+    var saved = hasContent() && state.savedAt && !ui.saveFailed ? "Saved in this browser " + when(state.savedAt) : "";
+    ui.footerSaved.textContent = saved;
+  }
+
   /* ── New pages and opened files ── */
 
   function recipePicker(inDialog, done) {
@@ -4413,7 +6162,7 @@
       grid.appendChild(
         h("div", { class: "writer-recipes__intro" }, [
           h("span", { class: "writer-recipes__title", text: "Start from a recipe" }),
-          h("span", { text: "Each lays out a page the way the writing guide recommends, with example text to replace (Tab jumps to the next). Or open a .md file to edit it." }),
+          h("span", { text: "Each lays out a page the way the writing guide recommends, with example text to replace (Tab jumps to the next). Or type a title above and start writing." }),
         ])
       );
     }
@@ -4438,9 +6187,9 @@
 
   function openRecipes() {
     var node;
-    var warn = hasContent() ? h("p", { class: "writer-dialog__warn", text: "This replaces the page you're writing. Download it first if you want to keep it." }) : null;
+    var note = hasContent() ? h("p", { class: "writer-dialog__foot", text: "The page you're writing stays in Drafts, in the sidebar." }) : null;
     node = dialog("Start a new page", [
-      warn,
+      note,
       recipePicker(true, function () {
         node.close();
       }),
@@ -4452,20 +6201,39 @@
     return !!(state.meta.title.trim() || state.body.trim());
   }
 
-  // The welcome card over an empty editor, until there's something to edit.
+  // The welcome card over an empty editor, until there's something to edit:
+  // the recipes, then the ways in for a page that exists already.
   function updateWelcome() {
     if (!ui.welcome) return;
     var show = !hasContent() && !ui.welcomeDone;
-    if (show && !ui.welcome.firstChild) ui.welcome.appendChild(recipePicker(false));
+    if (show && !ui.welcome.firstChild) {
+      ui.welcome.appendChild(recipePicker(false));
+      ui.welcome.appendChild(
+        h("div", { class: "writer-welcome__more" }, [
+          h("div", { class: "writer-welcome__card" }, [
+            h("span", { class: "writer-recipes__title", text: "Change a page that's on the site" }),
+            h("span", { text: "Open it here, or select the pencil at the top of the page itself. It opens in a draft of its own." }),
+            button("Open a page", "folder-open-outline", "md-button--ghost md-button--sm", openDialog),
+          ]),
+          h("div", { class: "writer-welcome__card" }, [
+            h("span", { class: "writer-recipes__title", text: "Coming from the Azure DevOps wiki?" }),
+            h("span", { text: "Paste a page in, from the wiki or from Word: headings, lists, tables, links and screenshots come across, and [[_TOC_]], ::: mermaid and > [!NOTE] turn into this site's syntax." }),
+            button("What's different here", "help-circle-outline", "md-button--ghost md-button--sm", openHelp),
+          ]),
+        ])
+      );
+    }
     ui.welcome.hidden = !show;
   }
 
   function startRecipe(recipe) {
-    closeForm(false);
-    state = newState(Object.assign(emptyMeta(), copy(recipe.meta || {})), "");
+    var was = hasContent() || hasAssets() ? state.id : "";
+    var id = takeDraft();
+    state = newState(Object.assign(emptyMeta(), copy(recipe.meta || {})), "", id);
     state.meta.at = { folder: folderPath(), assets: assetDir() };
     storeAllAssets();
     loadPage();
+    if (keptNote(was, id)) toast(keptNote(was, id).trim());
     ui.welcomeDone = true;
     var template = recipe.md.join("\n");
     if (template) {
@@ -4483,7 +6251,7 @@
     if (!hasContent() && !hasAssets()) return;
     var before = state;
     closeForm(false);
-    state = newState(emptyMeta(), "");
+    state = newState(emptyMeta(), "", before.id);
     state.meta.at = { folder: folderPath(), assets: assetDir() };
     storeAllAssets();
     loadPage();
@@ -4506,26 +6274,129 @@
     }
     var reader = new FileReader();
     reader.onload = function () {
-      if (hasContent() && !window.confirm("Replace the page you're writing with " + file.name + "? Download it first if you want to keep it.")) return;
-      var doc = parseDocument(String(reader.result));
-      closeForm(false);
-      state = newState(doc.meta, doc.body);
-      state.meta.mode = "update";
-      state.meta.slug = file.name.replace(/\.(md|markdown)$/i, "");
-      state.meta.slugEdited = true;
       var matches = data.pages.filter(function (p) {
         return p.src.split("/").pop() === file.name;
       });
-      if (matches.length === 1) state.meta.folder = dirname(matches[0].src);
-      // Its images are already on the site, flat in docs/images/ for older
-      // pages; they stay where they are. New ones go in the page's folders.
-      state.meta.at = { folder: folderPath(), assets: assetDir() };
-      storeAllAssets();
-      loadPage();
-      changed();
-      toast("Opened " + file.name + (matches.length === 1 ? " from docs/" + matches[0].src + "." : ". Check the folder it belongs in, under Page settings."));
+      var page = matches.length === 1 ? matches[0] : null;
+      openMarkdown(String(reader.result), { name: file.name, page: page });
     };
     reader.readAsText(file);
+  }
+
+  // A page's Markdown, in a draft of its own. source: { name, the file's
+  // name; page, the site's page it is, if known; site, true when it came
+  // from the site itself }. A page from an Azure DevOps wiki is turned into
+  // this site's syntax, and takes its title from its file name as the wiki
+  // does.
+  function openMarkdown(text, source) {
+    var C = convert();
+    var notes = [];
+    var stem = source.name.replace(/\.(md|markdown)$/i, "");
+    var adoTitle = "";
+    text = lines(text).join("\n");
+    if (!source.site && C && C.looksLikeAdo(text)) {
+      var res = C.fromAdo(text, { link: wikiLink });
+      text = res.md;
+      notes = res.notes;
+      adoTitle = wikiTitle(stem);
+      var first = /^\s*#\s+(.+?)\s*$/m.exec(text.replace(/^---\n[\s\S]*?\n---\n/, ""));
+      if (!(first && first.index === text.replace(/^---\n[\s\S]*?\n---\n/, "").search(/\S/) && first[1].toLowerCase() === adoTitle.toLowerCase())) text = C.demoteHeadings(text);
+      else adoTitle = "";
+    }
+    var was = hasContent() || hasAssets() ? state.id : "";
+    var id = takeDraft();
+    var doc = parseDocument(text);
+    state = newState(doc.meta, doc.body, id);
+    if (adoTitle) state.meta.title = adoTitle;
+    state.meta.mode = source.page ? "update" : adoTitle ? "new" : "update";
+    if (source.page) placePage(dirname(source.page.src), source.page.src.split("/").pop().replace(/\.md$/, ""));
+    else {
+      state.meta.slug = adoTitle ? slugify(adoTitle) : slugify(stem) || stem;
+      state.meta.slugEdited = true;
+    }
+    // Its images are already on the site, flat in docs/images/ for older
+    // pages; they stay where they are. New ones go in the page's folders.
+    state.meta.at = { folder: folderPath(), assets: assetDir() };
+    storeAllAssets();
+    loadPage();
+    // The page as it was opened, to compare with before it's published.
+    state.meta.original = toMarkdown();
+    ui.welcomeDone = true;
+    changed();
+    var where = source.page ? " from docs/" + source.page.src + "." : adoTitle ? ". Choose the folder it goes in, under Page settings." : ". Check the folder it belongs in, under Page settings.";
+    toast("Opened " + (source.site ? "“" + state.meta.title + "”" : source.name) + where + (notes.length ? " From the Azure DevOps wiki: " + notes.join("; ") + "." : "") + keptNote(was, id), source.page || adoTitle ? null : "Page settings", function () {
+      openSide("page");
+    });
+  }
+
+  // "Set-up-billing" → "Set up billing": the wiki writes spaces in a page's
+  // name as hyphens, and a hyphen as %2D.
+  function wikiTitle(stem) {
+    var text = stem.replace(/-/g, " ");
+    try {
+      text = decodeURIComponent(text);
+    } catch (e) {
+      // A stray %: keep it as it is.
+    }
+    return text.trim();
+  }
+
+  // A link written for the wiki, /Folder/Page-name, to one of this site's
+  // pages with that name, when there's exactly one.
+  function wikiLink(href) {
+    var parts = splitHash(href);
+    var last = parts[0].replace(/\/+$/, "").split("/").pop().replace(/\.md$/i, "");
+    if (!last) return null;
+    var want = slugify(wikiTitle(last));
+    var found = data.pages.filter(function (p) {
+      var stem = p.src.split("/").pop().replace(/\.md$/, "");
+      return stem === want || slugify(p.title) === want;
+    });
+    return found.length === 1 ? relPath(folderPath(), found[0].src) + parts[1] : null;
+  }
+
+  // One of the site's pages, from its source (hooks/writer.py publishes
+  // them under _writer/src/). An earlier draft of the same page is offered
+  // back first, so nothing is written over.
+  function openSitePage(src, fresh) {
+    var page = null;
+    for (var i = 0; i < data.pages.length; i++) if (data.pages[i].src === src) page = data.pages[i];
+    if (!page) {
+      toast("There's no page " + src + " on the site to open.");
+      return;
+    }
+    if (!fresh) {
+      var ix = readIndex();
+      var existing = ix.list.filter(function (e) {
+        return e.path === "docs/" + src;
+      }).sort(function (a, b) {
+        return (b.updated || 0) - (a.updated || 0);
+      })[0];
+      if (existing) {
+        if (existing.id !== state.id) switchDraft(existing.id);
+        toast("You already have a draft of “" + page.title + "”, from " + when(existing.updated) + ". Carrying on with it.", "Start again from the site", function () {
+          openSitePage(src, true);
+        });
+        return;
+      }
+    }
+    if (!data.sources) {
+      toast("This site doesn't publish its pages' Markdown, so open " + src.split("/").pop() + " from your copy of the repository instead.");
+      return;
+    }
+    fetch(BASE + "_writer/src/" + src.split("/").map(encodeURIComponent).join("/"), { cache: "no-cache" })
+      .then(function (response) {
+        if (!response.ok) throw new Error(response.status + " " + response.statusText);
+        return response.text();
+      })
+      .then(
+        function (text) {
+          openMarkdown(text, { name: src.split("/").pop(), page: page, site: true });
+        },
+        function (e) {
+          toast("Couldn't load " + src + " (" + String((e && e.message) || e) + "). Open the .md file from the repository instead.");
+        }
+      );
   }
 
   // Shows the page in state: a new, opened or loaded one.
@@ -4733,6 +6604,8 @@
   function editorExtensions(CM) {
     return [
       CM.lineNumbers(),
+      // Sections fold away under their heading, for long pages.
+      CM.foldGutter({ openText: "▾", closedText: "▸" }),
       CM.highlightActiveLineGutter(),
       CM.highlightSpecialChars(),
       CM.history(),
@@ -4760,7 +6633,7 @@
       dropField(CM),
       pymdownMarks(CM),
       CM.Prec.high(CM.keymap.of(writerKeys(CM))),
-      CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.searchKeymap, CM.historyKeymap, CM.lintKeymap, CM.defaultKeymap, [CM.indentWithTab])),
+      CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.searchKeymap, CM.historyKeymap, CM.foldKeymap, CM.lintKeymap, CM.defaultKeymap, [CM.indentWithTab])),
       CM.EditorView.updateListener.of(onEditorUpdate),
       CM.EditorView.domEventHandlers(editorEvents(CM)),
       CM.EditorView.contentAttributes.of({ "aria-label": "Page Markdown", spellcheck: "true", autocorrect: "off" }),
@@ -4768,16 +6641,35 @@
   }
 
   function writerKeys(CM) {
-    function tool(key) {
+    // A toolbar button's action, by its icon.
+    function tool(name) {
       return function () {
-        for (var i = 0; i < TOOLS.length; i++) if (TOOLS[i].key === key) TOOLS[i].run(editorArea());
+        for (var i = 0; i < TOOLS.length; i++) if (TOOLS[i].icon === name) TOOLS[i].run(editorArea());
+        return true;
+      };
+    }
+    function heading(level) {
+      return function () {
+        setHeading(level)(editorArea());
         return true;
       };
     }
     return [
-      { key: "Mod-b", run: tool("b") },
-      { key: "Mod-i", run: tool("i") },
-      { key: "Mod-k", run: tool("k") },
+      { key: "Mod-b", run: tool("format-bold") },
+      { key: "Mod-i", run: tool("format-italic") },
+      { key: "Mod-e", run: tool("code-tags") },
+      { key: "Mod-k", run: tool("link-variant") },
+      { key: "Mod-Shift-x", run: tool("format-strikethrough-variant") },
+      { key: "Mod-Shift-h", run: tool("format-color-highlight") },
+      { key: "Mod-Shift-7", run: tool("format-list-numbered") },
+      { key: "Mod-Shift-8", run: tool("format-list-bulleted") },
+      { key: "Mod-Shift-9", run: tool("format-list-checks") },
+      { key: "Mod-Alt-0", run: heading(0) },
+      { key: "Mod-Alt-2", run: heading(2) },
+      { key: "Mod-Alt-3", run: heading(3) },
+      { key: "Mod-Alt-4", run: heading(4) },
+      { key: "Tab", run: tableTab(1) },
+      { key: "Shift-Tab", run: tableTab(-1) },
       {
         key: "Mod-.",
         run: function (view) {
@@ -4798,7 +6690,142 @@
           return false;
         },
       },
+      // Ahead of CodeMirror's own Ctrl+/, which comments a line out.
+      {
+        key: "Mod-/",
+        run: function () {
+          openHelp();
+          return true;
+        },
+      },
     ];
+  }
+
+  /* Tables in the Markdown: Tab and Shift+Tab go from cell to cell and
+     line the columns up; Tab in the last cell adds a row. */
+
+  // The table the cursor is in: { from, to, first, rows, align, ind, row,
+  // col }, row and col being the cell's (the separator line isn't a row).
+  function tableAt(st, pos) {
+    var line = st.doc.lineAt(pos);
+    if (!/^\s*\|/.test(line.text) || inFence(st.doc, pos)) return null;
+    var first = line.number;
+    var last = line.number;
+    while (first > 1 && /^\s*\|/.test(st.doc.line(first - 1).text)) first--;
+    while (last < st.doc.lines && /^\s*\|/.test(st.doc.line(last + 1).text)) last++;
+    if (last === first || !RE.tableSep.test(st.doc.line(first + 1).text)) return null;
+    var ls = [];
+    for (var n = first; n <= last; n++) ls.push(st.doc.line(n).text);
+    var ind = /^\s*/.exec(ls[0])[0];
+    var align = splitRow(ls[1]).map(function (c) {
+      var l = c[0] === ":";
+      var r = c[c.length - 1] === ":";
+      return l && r ? "center" : r ? "right" : l ? "left" : "";
+    });
+    var rows = [ls[0]].concat(ls.slice(2)).map(splitRow);
+    var cols = Math.max.apply(null, rows.map(function (r) {
+      return r.length;
+    }));
+    rows.forEach(function (r) {
+      while (r.length < cols) r.push("");
+    });
+    var before = line.text.slice(0, pos - line.from).replace(/\\\|/g, "");
+    var col = Math.max(0, Math.min(cols - 1, (before.match(/\|/g) || []).length - 1));
+    var row = line.number - first;
+    row = row === 0 ? 0 : Math.max(1, row - 1);
+    return { from: st.doc.line(first).from, to: st.doc.line(last).to, rows: rows, align: align, ind: ind, row: row, col: col };
+  }
+
+  // The table's lines, and where each cell's text starts and ends in them.
+  function layoutTable(t) {
+    var text = TYPES.table.md({ rows: t.rows, align: t.align });
+    var out = lines(text).map(function (l) {
+      return t.ind + l;
+    });
+    var cells = [];
+    var at = 0;
+    out.forEach(function (l, i) {
+      if (i !== 1) {
+        var spots = [];
+        var re = /(^|[^\\])\|/g;
+        var m;
+        var pipes = [];
+        while ((m = re.exec(l))) pipes.push(m.index + m[1].length);
+        for (var k = 0; k + 1 < pipes.length; k++) {
+          var inner = l.slice(pipes[k] + 1, pipes[k + 1]);
+          var lead = inner.length - inner.replace(/^\s+/, "").length;
+          var body = inner.trim();
+          // An empty cell: just after the space that follows its |.
+          var from = at + pipes[k] + 1 + (body ? lead : Math.min(1, inner.length));
+          spots.push({ from: from, to: from + body.length });
+        }
+        cells.push(spots);
+      }
+      at += l.length + 1;
+    });
+    return { text: out.join("\n"), cells: cells };
+  }
+
+  function tableTab(dir) {
+    return function (view) {
+      var st = view.state;
+      var sel = st.selection.main;
+      if (st.doc.lineAt(sel.from).number !== st.doc.lineAt(sel.to).number) return false;
+      var t = tableAt(st, sel.head);
+      if (!t) return false;
+      var row = t.row;
+      var col = t.col + dir;
+      var cols = t.rows[0].length;
+      if (col >= cols) {
+        col = 0;
+        row++;
+      } else if (col < 0) {
+        col = cols - 1;
+        row--;
+      }
+      if (row < 0) {
+        row = 0;
+        col = 0;
+      }
+      if (row >= t.rows.length) t.rows.push(t.rows[0].map(function () { return ""; }));
+      var laid = layoutTable(t);
+      var spot = laid.cells[row][col];
+      view.dispatch({ changes: { from: t.from, to: t.to, insert: laid.text }, selection: { anchor: t.from + spot.from, head: t.from + spot.to }, scrollIntoView: true, userEvent: "input" });
+      return true;
+    };
+  }
+
+  // Lines the columns of the table at the cursor up, from the palette.
+  function formatTableAt() {
+    if (!ui.cm) return;
+    var st = ui.cm.state;
+    var t = tableAt(st, st.selection.main.head);
+    if (!t) {
+      toast("Put the cursor in a table first.");
+      return;
+    }
+    var laid = layoutTable(t);
+    var spot = laid.cells[t.row][t.col];
+    ui.cm.dispatch({ changes: { from: t.from, to: t.to, insert: laid.text }, selection: { anchor: t.from + spot.to } });
+    ui.cm.focus();
+  }
+
+  // Anywhere in the writer: save, the shortcuts, and the command palette.
+  function globalKeys(event) {
+    if (event.defaultPrevented) return;
+    var mod = event.ctrlKey || event.metaKey;
+    var key = event.key.toLowerCase();
+    if (mod && !event.altKey && !event.shiftKey && key === "s") {
+      event.preventDefault();
+      flushSave();
+      toast(ui.saveFailed ? "Couldn't save in this browser: download the bundle to keep this page." : "Saved in this browser. When the page is ready, Add to site says how to publish it.");
+    } else if (mod && !event.altKey && key === "/") {
+      event.preventDefault();
+      openHelp();
+    } else if ((mod && event.shiftKey && key === "p") || (event.key === "F1" && !mod)) {
+      event.preventDefault();
+      openPalette();
+    }
   }
 
   // Beside a suggestion's name: a callout's own icon and colour, or a
@@ -4824,6 +6851,8 @@
     if (u.docChanged || u.selectionSet) {
       var b = blockAt(u.state.selection.main.head);
       setActive(b ? b.id : null);
+      updateFooter();
+      if (!u.docChanged) drawOutline();
     }
   }
 
@@ -5040,42 +7069,312 @@
           }
           return true;
         }
-        var file = dt.files && dt.files[0];
-        if (!file) return false;
+        var files = Array.prototype.slice.call((dt.files) || []);
+        if (!files.length) return false;
         event.preventDefault();
-        if (/\.(md|markdown|zip)$/i.test(file.name)) openFile(file);
-        else if (/^image\//.test(file.type)) {
-          addImageFile(file, function (name) {
-            insertSnippet("![#{Describe what the image shows}](" + imageRel(name) + ")", insertionPoint(Math.min(pos, state.body.length), true));
-          });
-        } else if (FILE_TYPES[extOf(file.name)]) {
-          addAttachment(file, function (name) {
-            var at = Math.min(pos, view.state.doc.length);
-            view.dispatch({ changes: { from: at, insert: assetMarkdown("files", name) } });
-          });
-        } else toast("Drop an image (PNG, JPEG, GIF, WebP or SVG), a file for readers to download (" + FILE_KINDS + "), or a .md or bundle to open.");
+        if (files.length === 1 && /\.(md|markdown|zip)$/i.test(files[0].name)) {
+          openFile(files[0]);
+          return true;
+        }
+        dropFiles(files, pos);
         return true;
       },
-      paste: function (event) {
-        var files = event.clipboardData && event.clipboardData.files;
-        if (!files || !files.length) return false;
-        if (/^image\//.test(files[0].type)) {
-          event.preventDefault();
-          addImageFile(files[0], function (name) {
-            replaceSelection(editorArea(), "![Describe what the image shows](" + imageRel(name) + ")");
-          });
-          return true;
-        }
-        if (FILE_TYPES[extOf(files[0].name)]) {
-          event.preventDefault();
-          addAttachment(files[0], function (name) {
-            insertFileLink(editorArea(), name);
-          });
-          return true;
-        }
-        return false;
-      },
+      paste: onPaste,
     };
+  }
+
+  // Images and files dropped on the Markdown, one or many: each shown or
+  // linked where they were dropped, unless the page already pointed at it
+  // in a wiki's .attachments folder.
+  function dropFiles(files, pos) {
+    var skipped = [];
+    files.forEach(function (file) {
+      if (/^image\//.test(file.type)) {
+        addImageFile(file, function (name, linked) {
+          if (!linked) insertSnippet("![#{Describe what the image shows}](" + imageRel(name) + ")", insertionPoint(Math.min(pos, state.body.length), true));
+        });
+      } else if (FILE_TYPES[extOf(file.name)]) {
+        addAttachment(file, function (name, linked) {
+          if (linked) return;
+          var at = Math.min(pos, state.body.length);
+          editBody([{ from: at, to: at, insert: assetMarkdown("files", name) }]);
+        });
+      } else skipped.push(file.name);
+    });
+    if (skipped.length) toast("Can't use " + skipped.join(", ") + ". Drop images (PNG, JPEG, GIF, WebP or SVG), files for readers to download (" + FILE_KINDS + "), or one .md or bundle to open.");
+  }
+
+  /* ── Pasting ──
+     Formatted text (Word, Outlook, Teams, web pages, the Azure DevOps wiki,
+     Confluence, Excel) comes in as Markdown; a web address as a link; cells
+     copied as text as a table; Markdown from the Azure DevOps wiki in this
+     site's syntax; and a whole page, into an empty draft, as the page. The
+     toast after each offers the text as it was. Ctrl+Shift+V pastes plain
+     text, and anything pasted into code stays as it is. */
+
+  function convert() {
+    return window.docsWriterConvert || null;
+  }
+
+  // What an address on this site points at: { page, path, hash } for one of
+  // its pages, { path } for an image or file in docs/. null for elsewhere.
+  function sitePath(href) {
+    var abs;
+    var base;
+    try {
+      abs = new URL(href, location.href);
+      base = new URL(BASE, location.href);
+    } catch (e) {
+      return null;
+    }
+    if (abs.origin !== base.origin || abs.pathname.indexOf(base.pathname) !== 0) return null;
+    var rest = abs.pathname.slice(base.pathname.length);
+    try {
+      rest = decodeURIComponent(rest);
+    } catch (e) {
+      return null;
+    }
+    rest = rest.replace(/(^|\/)index\.html$/, "$1");
+    for (var i = 0; i < data.pages.length; i++) {
+      var p = data.pages[i];
+      if (p.url === rest || p.url === rest + "/") return { page: p, path: p.src, hash: abs.hash };
+    }
+    if ((data.files || []).indexOf(rest) >= 0) return { path: rest, hash: "" };
+    return null;
+  }
+
+  // A link in something pasted: to one of the site's pages, written as a
+  // path to its .md file, with the page's title in case the text is only
+  // the address. A page in an Azure DevOps wiki goes to the site's page of
+  // the same name, if there's one.
+  function pastedLink(href) {
+    var found = sitePath(href);
+    if (found) return { href: relPath(folderPath(), found.path) + (found.hash || ""), title: found.page ? found.page.title : "" };
+    var wiki = /\/_wiki\/wikis\/[^?#]*?\/([^/?#]+)(?:[?#].*)?$/.exec(href);
+    var mapped = wiki && wikiLink("/" + wiki[1]);
+    if (mapped) {
+      var target = joinPath(folderPath(), splitHash(mapped)[0]);
+      var page = data.pages.filter(function (p) {
+        return p.src === target;
+      })[0];
+      return { href: mapped, title: page ? page.title : "" };
+    }
+    return null;
+  }
+
+  // An image in pasted HTML: one on the site stays there; one the clipboard
+  // holds (data:) comes with the page; one on the web is left where it is.
+  // null when it can't be copied, like Word's file: pictures.
+  function pastedImage(src) {
+    var found = sitePath(src);
+    if (found) return relPath(folderPath(), found.path);
+    if (/^data:image\//i.test(src)) {
+      var blob = dataUrlBlob(src);
+      if (!blob || blob.size > IMAGE_MAX) return null;
+      var ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg").replace(/\+.*/, "");
+      if (!IMAGE_TYPES[ext]) return null;
+      var name = uniqueName("images", slug() + "-pasted." + ext);
+      addAsset("images", name, blob);
+      return imageRel(name);
+    }
+    if (/^https?:\/\//i.test(src)) return src;
+    return null;
+  }
+
+  function onPaste(event, view) {
+    var cd = event.clipboardData;
+    if (!cd) return false;
+    var sel = view.state.selection.main;
+    var code = inCode(view.state, sel.from);
+    var html = cd.getData("text/html");
+    var text = cd.getData("text/plain");
+    var files = Array.prototype.slice.call(cd.files || []);
+    var C = convert();
+    var rich = !code && !!C && !!html && C.isRichHtml(html) && /\S/.test(text);
+    // A screenshot or a file. Word and Excel put a picture of what was
+    // copied on the clipboard too: then the text wins.
+    if (files.length && !rich) {
+      if (/^image\//.test(files[0].type)) {
+        event.preventDefault();
+        addImageFile(files[0], function (name, linked) {
+          if (!linked) replaceSelection(editorArea(), "![Describe what the image shows](" + imageRel(name) + ")");
+          if (editableImage(name)) {
+            toast("Pasted " + name + ". Anything readers shouldn't see in it, like IDs or names?", "Edit image", function () {
+              openImageEditor(name);
+            });
+          }
+        });
+        return true;
+      }
+      if (FILE_TYPES[extOf(files[0].name)]) {
+        event.preventDefault();
+        addAttachment(files[0], function (name, linked) {
+          if (!linked) insertFileLink(editorArea(), name);
+        });
+        return true;
+      }
+      return false;
+    }
+    if (code || !C) return false;
+    if (rich) {
+      var result = C.htmlToMarkdown(html, { image: pastedImage, link: pastedLink });
+      if (!result.md.trim()) return false;
+      event.preventDefault();
+      var plainish = result.md.replace(/\s+/g, " ").trim() === text.replace(/\s+/g, " ").trim();
+      if (wholePage(result.md, text)) return true;
+      var done = insertPasted(view, result.md);
+      if (!plainish || result.notes.length) toast("Pasted with its formatting, as Markdown" + (result.notes.length ? ". " + result.notes.join(". ") : "") + ".", "Paste as plain text", undoPaste(view, done, text));
+      return true;
+    }
+    if (!text) return false;
+    var trimmed = text.trim();
+    if (/^https?:\/\/\S+$/.test(trimmed) && pasteUrl(view, trimmed)) {
+      event.preventDefault();
+      return true;
+    }
+    if (C.looksLikeAdo(text)) {
+      event.preventDefault();
+      var ado = C.fromAdo(text, { link: wikiLink });
+      if (wholePage(ado.md, text, ado.notes)) return true;
+      var put = insertPasted(view, C.demoteHeadings(ado.md));
+      toast("Pasted from the Azure DevOps wiki: " + ado.notes.join("; ") + ".", "Paste as it was", undoPaste(view, put, text));
+      return true;
+    }
+    if (wholePage(text, text)) {
+      event.preventDefault();
+      return true;
+    }
+    var table = C.tsvToTable(text);
+    if (table) {
+      event.preventDefault();
+      var cells = insertPasted(view, table);
+      toast("Pasted the cells as a table.", "Paste as plain text", undoPaste(view, cells, text));
+      return true;
+    }
+    return false;
+  }
+
+  // Inserts pasted Markdown. More than a line of text goes in as blocks of
+  // its own, with an empty line either side, indented like the line it's
+  // pasted on (inside a step or a tab). Returns { from, text } for Undo.
+  function insertPasted(view, md) {
+    var st = view.state;
+    var sel = st.selection.main;
+    var block = /\n/.test(md) || /^(#{1,6}\s|>|[-*+]\s|\d+[.)]\s|\||`{3}|!!!|\?\?\?|===|<(div|figure))/.test(md);
+    var from = sel.from;
+    var to = sel.to;
+    var insert = md;
+    // Where the cursor ends up: after the pasted text, before the gap.
+    var end = md.length;
+    if (block) {
+      var line = st.doc.lineAt(from);
+      var ind = /^ */.exec(line.text)[0];
+      var atStart = !st.sliceDoc(line.from, from).trim();
+      var body = lines(md)
+        .map(function (l) {
+          return l.trim() ? ind + l : "";
+        })
+        .join("\n");
+      var pre;
+      if (atStart) {
+        from = line.from;
+        var before = st.sliceDoc(0, from);
+        pre = !before || /\n[ \t]*\n$/.test(before) || before === "\n" ? "" : "\n";
+      } else pre = "\n\n";
+      var after = st.sliceDoc(to);
+      var rest = st.sliceDoc(to, st.doc.lineAt(to).to);
+      var post = !after.trim() ? "" : rest.trim() ? "\n\n" + ind : /^[ \t]*\n[ \t]*\n/.test(after) ? "" : "\n";
+      if (atStart && !rest.trim()) to = st.doc.lineAt(to).to;
+      insert = pre + body + post;
+      end = pre.length + body.length;
+    }
+    view.dispatch({ changes: { from: from, to: to, insert: insert }, selection: { anchor: from + end }, scrollIntoView: true, userEvent: "input.paste" });
+    view.focus();
+    return { from: from, text: insert };
+  }
+
+  // The toast's action after a paste: the text as it was copied.
+  function undoPaste(view, done, text) {
+    return function () {
+      var now = view.state.sliceDoc(done.from, done.from + done.text.length);
+      if (now !== done.text) {
+        toast("The page has changed since the paste: Ctrl+Z undoes it instead.");
+        return;
+      }
+      view.dispatch({ changes: { from: done.from, to: done.from + done.text.length, insert: text }, selection: { anchor: done.from + text.length }, userEvent: "input.paste" });
+      view.focus();
+    };
+  }
+
+  // A web address: over selected words, a link with them as its text; on
+  // its own, the page's title for one of the site's pages, or <address>.
+  // In a link's address already, it's left as it is (false).
+  function pasteUrl(view, url) {
+    var st = view.state;
+    var sel = st.selection.main;
+    var lead = st.sliceDoc(st.doc.lineAt(sel.from).from, sel.from);
+    if (/\]\(\s*[^)\s]*$/.test(lead) || /<$/.test(lead) || /\b(src|href)=["']?$/.test(lead) || /^\s*\[[^\]]*\]:\s*$/.test(lead)) return false;
+    var selected = st.sliceDoc(sel.from, sel.to);
+    var link = pastedLink(url);
+    var href = link ? link.href : url;
+    var insert;
+    if (selected.trim() && !/^https?:/.test(selected.trim()) && !/\n/.test(selected)) insert = "[" + selected + "](" + href + ")";
+    else if (link) insert = "[" + (link.title || href) + "](" + href + ")";
+    else insert = "<" + url + ">";
+    view.dispatch({ changes: { from: sel.from, to: sel.to, insert: insert }, selection: { anchor: sel.from + insert.length }, scrollIntoView: true, userEvent: "input.paste" });
+    if (!ui.urlTold && !selected.trim() && !link) {
+      ui.urlTold = true;
+      toast("Web addresses go in <…> so they're links on the site. Select some words first to link them instead.", "Paste as plain text", undoPaste(view, { from: sel.from, text: insert }, url));
+    }
+    return true;
+  }
+
+  // A whole page (front matter, or a # title on its first line) pasted into
+  // an empty draft: the title and settings go where they belong.
+  function wholePage(md, text, notes) {
+    if (hasContent() || !/^\s*(---\n[\s\S]*?\n---(\n|$)|#\s+\S)/.test(lines(md).join("\n"))) return false;
+    var doc = parseDocument(md);
+    if (!doc.meta.title) return false;
+    var m = state.meta;
+    ["title", "applies_to", "owner", "last_reviewed", "review_every", "visibility", "extraFront", "titleInFront"].forEach(function (key) {
+      if (doc.meta[key] !== undefined) m[key] = doc.meta[key];
+    });
+    if (!m.slugEdited) m.slug = "";
+    closeForm(false);
+    state.body = doc.body;
+    loadPage();
+    ui.welcomeDone = true;
+    updateWelcome();
+    changed();
+    toast("Pasted a whole page: its title went to the title" + (/^\s*---\n/.test(md) ? ", and its settings to Page settings" : "") + "." + (notes && notes.length ? " From the Azure DevOps wiki: " + notes.join("; ") + "." : ""), "Paste as plain text", function () {
+      m.title = "";
+      state.body = lines(text).join("\n");
+      loadPage();
+      changed();
+    });
+    return true;
+  }
+
+  // A page from the Azure DevOps wiki points at its images and files in
+  // the wiki's .attachments folder. One dropped in with the same name: the
+  // links point at the copy the page brings now. Returns how many did.
+  function linkAttachments(original, kind, name) {
+    var changes = [];
+    var re = /(\]\(\s*<?)((?:\.\.\/)*\/?\.attachments\/([^)\s>]+))/g;
+    var m;
+    while ((m = re.exec(state.body))) {
+      var file = m[3];
+      try {
+        file = decodeURIComponent(file);
+      } catch (e) {
+        // A stray %: compare it as written.
+      }
+      if (file.toLowerCase() !== String(original || "").toLowerCase()) continue;
+      var from = m.index + m[1].length;
+      changes.push({ from: from, to: from + m[2].length, insert: assetRel(kind, name) });
+    }
+    if (changes.length) editBody(changes);
+    return changes.length;
   }
 
   /* ── Suggestions as the writer types ── */
@@ -5385,7 +7684,19 @@
     runChecks().forEach(function (c) {
       var range = checkRange(c);
       if (!range) return;
-      out.push({ from: range.from, to: Math.max(range.to, range.from), severity: c.level === "warn" ? "warning" : "info", source: "Checks", message: c.text });
+      var d = { from: range.from, to: Math.max(range.to, range.from), severity: c.level === "warn" ? "warning" : "info", source: "Checks", message: c.text };
+      if (c.fix) {
+        d.actions = [
+          {
+            name: c.fix.label,
+            apply: function () {
+              c.fix.run();
+              changed();
+            },
+          },
+        ];
+      }
+      out.push(d);
     });
     return out;
   }
@@ -5591,6 +7902,8 @@
     ui.checkCount.textContent = warnings ? String(warnings) : "";
     ui.checkCount.hidden = !warnings;
     if (ui.side === "checks") renderChecks(checks);
+    drawOutline();
+    updateFooter();
     renderPreview();
     updateWelcome();
     if (ui.publishBox && ui.publishBox.isConnected) renderPublish();
@@ -5962,25 +8275,81 @@
     }, action ? 8000 : 4000);
   }
 
-  /* ── Saving the draft in this browser ── */
+  /* ── Drafts, kept in this browser ──
+     Each page being written is a draft of its own, so opening another page
+     never loses one. DRAFTS_KEY lists them, newest first when shown:
+     { current, list: [{ id, title, path, updated, words }] }. A draft with
+     nothing in it isn't listed. */
 
-  function save() {
-    var ok = write(DRAFT_KEY, JSON.stringify({ meta: state.meta, body: state.body }));
-    ui.saveFailed = !ok;
-    updateStatus();
+  function readIndex() {
+    var ix = null;
+    try {
+      ix = JSON.parse(read(DRAFTS_KEY) || "null");
+    } catch (e) {
+      ix = null;
+    }
+    if (!ix || !Array.isArray(ix.list)) ix = { current: "", list: [] };
+    return ix;
   }
 
-  function loadDraft() {
+  function writeIndex(ix) {
+    return write(DRAFTS_KEY, JSON.stringify(ix));
+  }
+
+  function indexEntry(ix, id) {
+    for (var i = 0; i < ix.list.length; i++) if (ix.list[i].id === id) return ix.list[i];
+    return null;
+  }
+
+  function draftJson(s) {
+    return JSON.stringify({ meta: s.meta, body: s.body });
+  }
+
+  function save() {
+    var text = draftJson(state);
+    if (text === state.savedJson) {
+      updateStatus();
+      return;
+    }
+    var ok = write(DRAFT_PREFIX + state.id, text);
+    var ix = readIndex();
+    var entry = indexEntry(ix, state.id);
+    if (hasContent() || hasAssets()) {
+      if (!entry) ix.list.push((entry = { id: state.id }));
+      entry.title = state.meta.title.trim();
+      entry.path = filePath();
+      entry.updated = Date.now();
+      entry.words = wordCount(state.body);
+    }
+    ix.current = state.id;
+    ok = writeIndex(ix) && ok;
+    ui.saveFailed = !ok;
+    if (ok) {
+      // What the draft was before this change, as a version to go back to.
+      if (state.savedJson) keepVersion(state, state.savedJson, state.savedAt, false);
+      state.savedJson = text;
+      state.savedAt = Date.now();
+    }
+    updateStatus();
+    if (ui.side === "drafts") drawDrafts();
+  }
+
+  // A draft from localStorage, or null. Its images and files come from
+  // IndexedDB afterwards: loadAssets().
+  function loadDraft(id) {
     try {
-      var draft = JSON.parse(read(DRAFT_KEY) || "null");
+      var raw = read(DRAFT_PREFIX + id);
+      var draft = JSON.parse(raw || "null");
       if (!draft || !draft.meta) return null;
-      state = newState(Object.assign(emptyMeta(), draft.meta), "");
-      // Images and files come from IndexedDB afterwards: loadAssets().
-      state.assetsLoaded = false;
-      if (typeof draft.body === "string") state.body = lines(draft.body).join("\n");
+      var s = newState(Object.assign(emptyMeta(), draft.meta), "", id);
+      s.assetsLoaded = false;
+      if (typeof draft.body === "string") s.body = lines(draft.body).join("\n");
       else if (Array.isArray(draft.blocks)) {
-        // A draft from before the Markdown editor: a list of blocks.
-        state.body = draft.blocks
+        // A draft from before the Markdown editor: a list of blocks. Their
+        // Markdown needs the draft's folder, so it's the state meanwhile.
+        var was = state;
+        state = s;
+        s.body = draft.blocks
           .filter(function (b) {
             return b && TYPES[b.type] && !isEmpty(b);
           })
@@ -5988,25 +8357,341 @@
             return TYPES[b.type].md(b);
           })
           .join("\n\n");
-      } else state = null;
-      return state;
+        state = was;
+      } else return null;
+      s.savedJson = draftJson(s);
+      var entry = indexEntry(readIndex(), id);
+      s.savedAt = (entry && entry.updated) || Date.now();
+      return s;
     } catch (e) {
-      state = null;
       return null;
     }
+  }
+
+  // The draft the writer opens with: the last one shown. The one draft kept
+  // before there were several becomes the first on the list.
+  function startingDraft() {
+    var ix = readIndex();
+    var legacy = read(DRAFT_KEY);
+    var claim = false;
+    if (legacy && !ix.list.length) {
+      var id = newId();
+      var title = "";
+      try {
+        title = (JSON.parse(legacy).meta || {}).title || "";
+      } catch (e) {
+        title = "";
+      }
+      if (write(DRAFT_PREFIX + id, legacy)) {
+        ix.list.push({ id: id, title: String(title).trim(), path: "", updated: Date.now() });
+        ix.current = id;
+        writeIndex(ix);
+        write(DRAFT_KEY, null);
+        claim = true;
+      }
+    }
+    var s = (ix.current && loadDraft(ix.current)) || null;
+    if (!s) {
+      var sorted = ix.list.slice().sort(function (a, b) {
+        return (b.updated || 0) - (a.updated || 0);
+      });
+      for (var i = 0; i < sorted.length && !s; i++) s = loadDraft(sorted[i].id);
+    }
+    if (!s) {
+      s = newState(emptyMeta(), "");
+      s.assetsLoaded = false;
+    }
+    // Images and files kept before drafts had ids belong to this one.
+    if (claim || (legacy && !ix.list.length)) s.claimLegacy = true;
+    else if (read(IMAGES_KEY)) s.claimLegacy = true;
+    return s;
+  }
+
+  // Opening a page, a bundle or a recipe: into a draft of its own, so the
+  // page being written stays in Drafts. An empty draft is used as it is.
+  // Returns the id for the new state.
+  function takeDraft() {
+    closeForm(false);
+    if (!state) return newId();
+    flushSave();
+    // Not a draft whose images are still loading: it may have some.
+    if (hasContent() || hasAssets() || !state.assetsLoaded) return newId();
+    return state.id;
+  }
+
+  // After takeDraft(): where the page that was showing went, for a toast.
+  function keptNote(was, id) {
+    return was && was !== id ? " The page you were writing is in Drafts." : "";
+  }
+
+  // Shows a draft and makes it the current one.
+  function showDraft(s) {
+    state = s;
+    loadPage();
+    if (!s.assetsLoaded) loadAssets();
+    var ix = readIndex();
+    ix.current = s.id;
+    writeIndex(ix);
+    updateStatus();
+    render();
+    if (ui.side === "drafts") drawDrafts();
+  }
+
+  function switchDraft(id) {
+    if (state.id === id) return;
+    var next = loadDraft(id);
+    if (!next) {
+      toast("That draft can't be read any more, so it's been taken off the list.");
+      dropFromIndex(id);
+      drawDrafts();
+      return;
+    }
+    closeForm(false);
+    flushSave();
+    showDraft(next);
+    toast("Opened " + (next.meta.title.trim() || "the untitled draft") + ".");
+  }
+
+  function newDraft() {
+    closeForm(false);
+    flushSave();
+    if (!hasContent() && !hasAssets()) {
+      ui.welcomeDone = false;
+      updateWelcome();
+      ui.title.focus();
+      return;
+    }
+    var s = newState(emptyMeta(), "");
+    ui.welcomeDone = false;
+    showDraft(s);
+    ui.title.focus();
+  }
+
+  function dropFromIndex(id) {
+    var ix = readIndex();
+    var entry = indexEntry(ix, id);
+    ix.list = ix.list.filter(function (e) {
+      return e.id !== id;
+    });
+    if (ix.current === id) ix.current = "";
+    writeIndex(ix);
+    return entry;
+  }
+
+  // Drafts deleted in this visit whose Undo is still on offer: kept until
+  // it's gone, even from collectGarbage().
+  var deleting = {};
+
+  // Off the list at once; its text, images and history go a little later,
+  // unless Undo puts it back.
+  function deleteDraft(id) {
+    var entry = dropFromIndex(id);
+    if (!entry) return;
+    if (state.id === id) {
+      var ix = readIndex();
+      var sorted = ix.list.slice().sort(function (a, b) {
+        return (b.updated || 0) - (a.updated || 0);
+      });
+      var next = null;
+      for (var i = 0; i < sorted.length && !next; i++) next = loadDraft(sorted[i].id);
+      closeForm(false);
+      state.savedJson = draftJson(state);
+      showDraft(next || newState(emptyMeta(), ""));
+    }
+    drawDrafts();
+    deleting[id] = true;
+    var timer = setTimeout(function () {
+      delete deleting[id];
+      if (!indexEntry(readIndex(), id) && state.id !== id) purgeDraft(id);
+    }, 15000);
+    toast("Deleted " + (entry.title ? "“" + entry.title + "”" : "the untitled draft") + ".", "Undo", function () {
+      clearTimeout(timer);
+      delete deleting[id];
+      var ix = readIndex();
+      if (!indexEntry(ix, id)) ix.list.push(entry);
+      writeIndex(ix);
+      drawDrafts();
+    });
+  }
+
+  function purgeDraft(id) {
+    write(DRAFT_PREFIX + id, null);
+    tx("readwrite", function (store) {
+      store.delete(draftRange(id));
+    }).catch(function () {});
+    tx("readwrite", function (store) {
+      store.delete(draftRange(id));
+    }, HISTORY_STORE).catch(function () {});
+  }
+
+  // Drafts deleted in an earlier visit, or left behind: their text, images
+  // and history. Not rows without a draft id: a draft moved over from
+  // before takes those (loadAssets).
+  function collectGarbage() {
+    var ix = readIndex();
+    var live = {};
+    ix.list.forEach(function (e) {
+      live[e.id] = true;
+    });
+    Object.keys(deleting).forEach(function (id) {
+      live[id] = true;
+    });
+    if (state) live[state.id] = true;
+    try {
+      for (var i = localStorage.length - 1; i >= 0; i--) {
+        var key = localStorage.key(i);
+        if (key && key.indexOf(DRAFT_PREFIX) === 0 && !live[key.slice(DRAFT_PREFIX.length)]) localStorage.removeItem(key);
+      }
+    } catch (e) {
+      // No localStorage: nothing kept to collect.
+    }
+    [DB_STORE, HISTORY_STORE].forEach(function (name) {
+      tx("readonly", function (store) {
+        return store.getAllKeys();
+      }, name).then(function (keys) {
+        var dead = (keys || []).filter(function (key) {
+          var id = String(key).split("/")[0];
+          return /^d[0-9a-z]+$/.test(id) && !live[id];
+        });
+        if (dead.length) {
+          tx("readwrite", function (store) {
+            dead.forEach(function (key) {
+              store.delete(key);
+            });
+          }, name);
+        }
+      }).catch(function () {});
+    });
+  }
+
+  // Before the page closes: a change the timer hasn't saved yet.
+  function flushSave() {
+    if (!state) return;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+      syncPaths();
+    }
+    save();
+  }
+
+  /* Versions: what a draft was before it changed, at most every few
+     minutes, to compare with or go back to. versionAt: when each draft's
+     last one was kept, in this visit. */
+
+  var versionAt = {};
+
+  function keepVersion(s, json, at, force) {
+    var last = versionAt[s.id] || 0;
+    if (!force && Date.now() - last < VERSION_EVERY) return;
+    var draft;
+    try {
+      draft = JSON.parse(json);
+    } catch (e) {
+      return;
+    }
+    // A page with no text yet is nothing to go back to.
+    if (!draft || !String(draft.body || "").trim()) return;
+    versionAt[s.id] = Date.now();
+    var id = s.id;
+    var when = at || Date.now();
+    tx("readwrite", function (store) {
+      store.put({ draft: id, at: when, title: (draft.meta && draft.meta.title) || "", words: wordCount(draft.body || ""), json: json }, id + "/" + String(when).padStart(14, "0"));
+    }, HISTORY_STORE)
+      .then(function () {
+        return tx("readonly", function (store) {
+          return store.getAllKeys(draftRange(id));
+        }, HISTORY_STORE);
+      })
+      .then(function (keys) {
+        if (keys && keys.length > VERSIONS_KEPT) {
+          var old = keys.slice(0, keys.length - VERSIONS_KEPT);
+          return tx("readwrite", function (store) {
+            old.forEach(function (key) {
+              store.delete(key);
+            });
+          }, HISTORY_STORE);
+        }
+      })
+      .then(function () {
+        if (ui.side === "drafts" && state.id === id) drawDrafts();
+      })
+      .catch(function () {});
+  }
+
+  function versionsOf(id) {
+    return tx("readonly", function (store) {
+      return store.getAll(draftRange(id));
+    }, HISTORY_STORE).then(function (rows) {
+      return (rows || []).sort(function (a, b) {
+        return b.at - a.at;
+      });
+    });
+  }
+
+  function restoreVersion(v) {
+    var draft;
+    try {
+      draft = JSON.parse(v.json);
+    } catch (e) {
+      toast("That version can't be read.");
+      return;
+    }
+    var before = draftJson(state);
+    keepVersion(state, before, Date.now(), true);
+    closeForm(false);
+    state.meta = Object.assign(emptyMeta(), draft.meta || {});
+    state.body = lines(draft.body || "").join("\n");
+    loadPage();
+    changed();
+    toast("Went back to the version from " + when(v.at) + ".", "Undo", function () {
+      var was = JSON.parse(before);
+      closeForm(false);
+      state.meta = Object.assign(emptyMeta(), was.meta);
+      state.body = was.body;
+      loadPage();
+      changed();
+    });
+  }
+
+  // "just now", "12 min ago", "today 14:32", "yesterday 09:10", "12 Sep 16:05".
+  function when(at) {
+    var d = new Date(at);
+    var now = new Date();
+    var mins = Math.round((now - d) / 60000);
+    function two(n) {
+      return (n < 10 ? "0" : "") + n;
+    }
+    var clock = two(d.getHours()) + ":" + two(d.getMinutes());
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + " min ago";
+    var day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (d >= day) return "today " + clock;
+    if (d >= new Date(day - 864e5)) return "yesterday " + clock;
+    return d.getDate() + " " + d.toLocaleString("en-GB", { month: "short" }) + (d.getFullYear() !== now.getFullYear() ? " " + d.getFullYear() : "") + " " + clock;
+  }
+
+  // Words of text, not counting code.
+  function wordCount(md) {
+    var text = String(md || "")
+      .replace(/(`{3,}|~{3,})[\s\S]*?\1/g, " ")
+      .replace(/`[^`\n]*`/g, " x ")
+      .replace(/<[^>]+>|\{[^}\n]*\}|\]\([^)]*\)/g, " ")
+      .replace(/[#>*_=|~+\-[\]!:]+/g, " ");
+    return (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) || []).length;
   }
 
   function updateStatus() {
     if (!ui.status) return;
     var assetsLost = state.assetsSaved === false && hasAssets();
-    ui.status.textContent = ui.status.title = ui.saveFailed
+    var warn = ui.saveFailed
       ? "Can't keep a draft in this browser: download before you leave."
       : assetsLost
         ? "Can't keep the images and files in this browser: download the bundle before you leave."
-        : hasContent()
-          ? "Draft kept in this browser only"
-          : "";
-    ui.status.classList.toggle("writer-status--warn", !!ui.saveFailed || assetsLost);
+        : "";
+    ui.status.textContent = ui.status.title = warn;
+    ui.status.classList.toggle("writer-status--warn", !!warn);
+    updateFooter();
   }
 
   /* ── Mount on every page ── */

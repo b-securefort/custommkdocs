@@ -18,7 +18,8 @@ mkdocsstaging.yml                  # staging: inherits mkdocs.yml, sets extra.en
 hooks/
   page_visibility.py               # `unlisted` / `draft` front matter, per environment
   front_matter.py                  # resolves and checks front matter links, images, icons
-  writer.py                        # the site's folders, pages and settings, for the Write page
+  writer.py                        # the site's folders, pages and settings, for the Write page;
+                                   # publishes each page's Markdown to _writer/src/ to edit there
 tools/ingest_bundle.py             # checks a Write page bundle and puts its files in docs/
 tools/codemirror/                  # builds the Write page's editor: npm install && npm run build
 tools/msal/                        # copies the chat's sign-in library: npm install && npm run build
@@ -28,6 +29,7 @@ overrides/
   main.html                        # fonts, pre-paint appearance script, banner
   home.html                        # home page layout, filled from docs/index.md front matter
   partials/logo.html               # the logo, green or blue to suit the theme
+  partials/actions.html            # the "Edit in the page writer" pencil on every page
 docs/
   .nav.yml                         # top tabs, in order; every folder can have one
   index.md                         # Home: all content is in its front matter
@@ -43,6 +45,8 @@ docs/
   javascripts/
     appearance.js                  # header switcher, Appearance page, effects
     chat.js                        # the chat: questions to Nexus, answers from the knowledge base
+    writer.js                      # the Write page (docs/write.md)
+    writer-convert.js              # its paste from Word and the web, and Azure DevOps wiki pages
   chat-signin.html                 # where the chat's sign-in popup comes back to
 ```
 

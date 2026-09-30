@@ -9,6 +9,8 @@ How to add and edit pages on this site. Copy the examples and change the text.
 !!! tip "Rather not write Markdown by hand?"
     The [page writer](../write.md) is a Markdown editor in your browser with the site's components to hand: drag one in from the sidebar or type `/`, fill it in as Markdown or in its form, and see the page as it will look beside it. It suggests links, icons and placeholders as you type and underlines what the checks find. Then download the page with its images and files as one bundle, which a pipeline turns into a pull request. See [Publish from the page writer](#publish-from-the-page-writer).
 
+    To change a page that's already here, select the pencil at the top of it: the page opens in the writer. Coming from the Azure DevOps wiki? Paste a page in, from the wiki or from Word, and its headings, lists, tables, links and screenshots come across, with the wiki's `[[_TOC_]]`, `::: mermaid` and `> [!NOTE]` turned into this site's syntax. **Ctrl+/** on the writer lists its shortcuts and what's different from the wiki.
+
 ## Add a page
 
 The site has two menus:
@@ -267,11 +269,11 @@ The [page writer](../write.md) packs a page into a **bundle**: one `.zip` holdin
 
 If the run fails, its log says why. The usual reasons:
 
-- **A new page whose file name is taken.** To change that page, open it on the page writer (**Open a .md or bundle**) and choose *A change to an existing page* under **Add to site**. Otherwise give the new page another file name.
+- **A new page whose file name is taken.** To change that page, open it on the page writer (**Open**, or the pencil at the top of the page itself): it opens as *A change to an existing page*. Otherwise give the new page another file name.
 - **A broken link or image.** The build names the page and the link. The page writer underlines most of these as you type, and lists them under **Checks** in its sidebar.
-- **Too big.** A bundle can be up to 25 MB.
+- **Too big.** A bundle can be up to 25 MB. The page writer saves screenshots over 5 MB smaller as you add them.
 
-To carry on with a page later, or on another computer, open its bundle on the page writer: the page, its images and its files all come back. **Add to site** also has a *Do it by hand* tab, for adding the files to the repository yourself with git.
+Each page you write or open on the page writer is a draft of its own, kept in your browser until you delete it: **Drafts and versions**, in its sidebar, switches between them, and keeps earlier versions of each to compare with or go back to. To carry on with a page on another computer, open its bundle on the page writer there: the page, its images and its files all come back. **Add to site** also has a *Do it by hand* tab, for adding the files to the repository yourself with git.
 
 ## Check your changes
 

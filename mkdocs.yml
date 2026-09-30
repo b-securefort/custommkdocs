@@ -171,6 +171,11 @@ extra:
     prefix: incoming   # the pipeline moves bundles on to processed/ or failed/
     region: ""         # such as eu-west-1
     pipeline_id: ""    # the number after definitionId= in the pipeline's address
+    # Publish each page's Markdown under _writer/src/, so any page can be
+    # opened on the Write page and changed there (its pencil button, or Open).
+    # Only where the Write page is published: with `draft: prod` on write.md,
+    # production has neither. false leaves both out everywhere.
+    sources: true
   # The chat button in the bottom-right corner of every page
   # (javascripts/chat.js). Questions go to Nexus, which answers from the
   # knowledge base with the skill below; each one is sent on its own, and

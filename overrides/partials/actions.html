@@ -1,0 +1,30 @@
+{#-
+  Material's page actions (edit and view on the repository), plus the button
+  that opens the page on the Write page. hooks/writer.py sets writer_edit on
+  every page when the site has a Write page and publishes its pages'
+  Markdown (extra.writer.sources).
+-#}
+{% if page.meta and page.meta.writer_edit %}
+  <a href="{{ page.meta.writer_edit }}" title="Edit in the page writer" class="md-content__button md-icon" rel="nofollow">
+    {% include ".icons/material/file-document-edit-outline.svg" %}
+  </a>
+{% endif %}
+{% if page.edit_url %}
+  {% if "content.action.edit" in features %}
+    <a href="{{ page.edit_url }}" title="{{ lang.t('action.edit') }}" class="md-content__button md-icon" rel="edit">
+      {% set icon = config.theme.icon.edit or "material/file-edit-outline" %}
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </a>
+  {% endif %}
+  {% if "content.action.view" in features %}
+    {% if "/blob/" in page.edit_url %}
+      {% set part = "blob" %}
+    {% else %}
+      {% set part = "edit" %}
+    {% endif %}
+    <a href="{{ page.edit_url | replace(part, 'raw') }}" title="{{ lang.t('action.view') }}" class="md-content__button md-icon">
+      {% set icon = config.theme.icon.view or "material/file-eye-outline" %}
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </a>
+  {% endif %}
+{% endif %}

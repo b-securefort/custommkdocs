@@ -1951,6 +1951,700 @@
   animation: none;
 }
 
+/* ── The Markdown's toolbar: groups, and buttons that open a menu ── */
+
+.writer-toolbar__sep {
+  flex: none;
+  width: 1px;
+  height: 1rem;
+  margin: 0 0.25rem;
+  background: var(--base-700);
+}
+
+.writer-icon-btn--menu {
+  position: relative;
+}
+
+.writer-icon-btn--menu::after {
+  content: "";
+  position: absolute;
+  right: 0.12rem;
+  bottom: 0.18rem;
+  border: 0.14rem solid transparent;
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  transform: rotate(135deg);
+  opacity: 0.7;
+}
+
+.writer-icon-btn[aria-expanded="true"] {
+  background: var(--base-800);
+  color: var(--base-100);
+}
+
+button.writer-editor__hint {
+  flex: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.58rem;
+  cursor: pointer;
+}
+
+button.writer-editor__hint:hover {
+  color: var(--base-200);
+}
+
+/* A menu under a toolbar button */
+.writer-menu {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  padding: 0.3rem;
+  border: 1px solid var(--base-700);
+  border-radius: 9px;
+  background: var(--base-900);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.68rem;
+  animation: writer-pop 0.14s var(--ease-out);
+}
+
+.writer-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--base-200);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.writer-menu__item:hover,
+.writer-menu__item:focus-visible {
+  background: var(--base-800);
+  color: var(--base-100);
+  outline: none;
+}
+
+.writer-menu__item[aria-checked="true"] {
+  color: var(--accent-light);
+  font-weight: 650;
+}
+
+.writer-menu__label {
+  flex: 1;
+}
+
+.writer-menu__hint {
+  color: var(--base-500);
+  font-size: 0.58rem;
+}
+
+.writer-menu__sep {
+  height: 1px;
+  margin: 0.25rem 0.2rem;
+  background: var(--base-700);
+}
+
+/* The table size picker */
+.writer-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 6), 1.05rem);
+  gap: 0.18rem;
+  padding: 0.25rem;
+}
+
+.writer-grid__cell {
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border: 1px solid var(--base-600);
+  border-radius: 3px;
+  background: var(--base-950);
+  cursor: pointer;
+}
+
+.writer-grid__cell--on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 30%, var(--base-900));
+}
+
+.writer-grid:focus-within .writer-grid__cell:focus-visible {
+  outline: none;
+}
+
+.writer-grid__label {
+  padding: 0.2rem 0.3rem 0.1rem;
+  color: var(--base-400);
+  font-size: 0.6rem;
+}
+
+[data-motion="off"] .writer-menu {
+  animation: none;
+}
+
+/* ── Keys, as in the shortcuts and the palette ── */
+
+.writer-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.4rem;
+}
+
+.writer-keys__combo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.writer-keys__or {
+  margin-right: 0.25rem;
+  color: var(--base-500);
+  font-size: 0.9em;
+}
+
+.md-typeset .writer-keys kbd {
+  min-width: 1.2em;
+  padding: 0.05em 0.35em;
+  border: 1px solid var(--base-600);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--base-950);
+  box-shadow: none;
+  color: var(--base-200);
+  font-family: var(--md-text-font-family);
+  font-size: 0.58rem;
+  line-height: 1.4;
+  text-align: center;
+  vertical-align: baseline;
+}
+
+/* ── Shortcuts and help ── */
+
+.writer-shortcuts__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 0 1.4rem;
+}
+
+.md-typeset .writer-shortcuts {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.8rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.66rem;
+}
+
+.md-typeset .writer-shortcuts dt {
+  margin: 0;
+  color: var(--base-300);
+  font-weight: 400;
+}
+
+.md-typeset .writer-shortcuts dd {
+  margin: 0;
+  text-align: right;
+}
+
+.md-typeset table.writer-ado {
+  display: table;
+  width: 100%;
+  margin: 0;
+  font-size: 0.64rem;
+}
+
+.md-typeset table.writer-ado th,
+.md-typeset table.writer-ado td {
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+}
+
+.md-typeset table.writer-ado td:first-child {
+  width: 40%;
+  color: var(--base-300);
+}
+
+/* ── The command palette ── */
+
+.writer-dialog--palette {
+  align-self: flex-start;
+  margin-top: 12vh;
+  width: min(34rem, calc(100vw - 2rem));
+}
+
+.writer-dialog--palette .writer-dialog__head {
+  padding-bottom: 0.3rem;
+}
+
+.md-typeset .writer-palette__input {
+  font-size: 0.8rem;
+}
+
+.writer-palette__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.writer-palette__list .writer-page {
+  align-items: center;
+}
+
+.writer-palette__list .writer-page .writer-keys {
+  margin-left: auto;
+}
+
+.writer-palette__group {
+  margin-left: auto;
+  color: var(--base-500);
+  font-size: 0.6rem;
+}
+
+.writer-palette__group + .writer-keys {
+  margin-left: 0.6rem !important;
+}
+
+/* ── Fixes the checks offer ── */
+
+.writer-checks__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.writer-checks__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.7rem;
+}
+
+.writer-checks__actions:empty {
+  display: none;
+}
+
+.writer-link-btn--fix {
+  padding: 0 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.writer-link-btn--fix:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  text-decoration: none;
+}
+
+.writer-editor__host .cm-diagnosticAction {
+  margin-left: 0.6rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 999px;
+  background: none;
+  color: var(--accent-light);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.writer-editor__host .cm-diagnosticAction:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ── Editing a screenshot ── */
+
+.writer-dialog--image {
+  width: min(64rem, calc(100vw - 2rem));
+}
+
+.writer-imgedit {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background:
+    repeating-conic-gradient(var(--base-800) 0 25%, var(--base-900) 0 50%) 0 0 / 16px 16px;
+}
+
+.writer-imgedit__canvas {
+  max-width: 100%;
+  max-height: 58vh;
+  cursor: crosshair;
+  touch-action: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.writer-dialog--image .writer-views {
+  margin-left: 0;
+}
+
+.writer-imgedit__style {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.writer-imgedit__style[hidden] {
+  display: none;
+}
+
+.md-typeset .writer-imgedit__style select {
+  width: auto;
+}
+
+.writer-imgedit__status {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The welcome card's second row ── */
+
+.writer-welcome__more {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.writer-welcome__card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px dashed var(--base-600);
+  border-radius: 10px;
+  color: var(--base-400);
+  font-size: 0.64rem;
+}
+
+.writer-welcome__card .writer-recipes__title {
+  font-size: 0.74rem;
+}
+
+.writer-welcome__card .writer-icon {
+  color: var(--accent-light);
+}
+
+/* ── The line under the Markdown ── */
+
+.writer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.2rem 1rem;
+  padding: 0.2rem 0.7rem;
+  border-top: 1px solid var(--base-800);
+  background: var(--base-950);
+  color: var(--base-500);
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.writer-footer__saved {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.writer-row--center {
+  align-items: center;
+}
+
+/* ── Open: the site's pages ── */
+
+.writer-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  max-height: min(22rem, 45vh);
+  margin-top: -0.2rem;
+  padding: 0.25rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-950);
+  overflow: auto;
+}
+
+.writer-page {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--base-200);
+  font: inherit;
+  font-size: 0.7rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.writer-page:hover,
+.writer-page--chosen {
+  background: var(--base-800);
+  color: var(--base-100);
+}
+
+.writer-page--chosen {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.writer-page__title {
+  font-weight: 600;
+}
+
+.md-typeset .writer-page__path {
+  margin-left: auto;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  color: var(--base-500);
+  font-size: 0.6rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Sidebar: drafts and versions ── */
+
+.writer-drafts,
+.writer-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.writer-draft {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-950);
+}
+
+.writer-draft--current {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--base-700));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.writer-draft__open {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0.4rem 0.2rem 0.4rem 0.6rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.writer-draft__open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+.writer-draft__title {
+  overflow: hidden;
+  color: var(--base-100);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writer-draft__meta {
+  overflow: hidden;
+  color: var(--base-500);
+  font-size: 0.6rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writer-version {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.1rem 0.3rem 0.5rem;
+  border-left: 2px solid var(--base-700);
+}
+
+.writer-version__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.writer-version__when {
+  color: var(--base-200);
+  font-weight: 600;
+}
+
+/* ── Comparing versions ── */
+
+.writer-diff {
+  max-height: 60vh;
+  padding: 0.4rem 0;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-950);
+  overflow: auto;
+  font-family: var(--md-code-font-family);
+  font-size: 0.62rem;
+  line-height: 1.55;
+}
+
+.writer-diff__line {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 0.7rem 0 0.4rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.writer-diff__mark {
+  flex: none;
+  width: 0.8em;
+  color: var(--base-500);
+  text-align: center;
+  user-select: none;
+}
+
+.writer-diff__line--add {
+  background: color-mix(in srgb, var(--success, #16a34a) 16%, transparent);
+}
+
+.writer-diff__line--add .writer-diff__mark {
+  color: var(--success, #16a34a);
+}
+
+.writer-diff__line--del {
+  background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent);
+}
+
+.writer-diff__line--del .writer-diff__mark {
+  color: var(--danger, #dc2626);
+}
+
+.writer-diff__line--same {
+  color: var(--base-400);
+}
+
+.writer-diff__fold {
+  padding: 0.15rem 0.7rem;
+  color: var(--base-500);
+  font-family: var(--md-text-font-family);
+  font-style: italic;
+}
+
+.writer-diff__stat {
+  font-weight: 700;
+}
+
+.writer-diff__stat--add {
+  color: var(--success, #16a34a);
+}
+
+.writer-diff__stat--del {
+  color: var(--danger, #dc2626);
+}
+
+/* ── Sidebar: outline ── */
+
+.writer-outline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.writer-outline__item {
+  display: flex;
+  align-items: center;
+  padding-left: calc(var(--depth, 0) * 0.8rem);
+  border-radius: 6px;
+}
+
+.writer-outline__item .writer-icon-btn {
+  width: 1.3rem;
+  height: 1.3rem;
+  opacity: 0;
+  font-size: 0.7rem;
+}
+
+.writer-outline__item:hover .writer-icon-btn,
+.writer-outline__item:focus-within .writer-icon-btn {
+  opacity: 1;
+}
+
+.writer-outline__item .writer-icon-btn:disabled {
+  visibility: hidden;
+}
+
+.writer-outline__link {
+  flex: 1;
+  min-width: 0;
+  padding: 0.28rem 0.4rem;
+  border: 0;
+  border-left: 2px solid var(--base-700);
+  background: none;
+  color: var(--base-300);
+  font: inherit;
+  font-size: 0.68rem;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.writer-outline__link:hover {
+  color: var(--base-100);
+}
+
+.writer-outline__item--active .writer-outline__link {
+  border-left-color: var(--accent);
+  color: var(--base-100);
+  font-weight: 600;
+}
+
+.writer-outline__link--warn {
+  color: var(--writer-warn);
+}
+
+.md-typeset .writer-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.8rem;
+  margin: 0;
+  font-size: 0.66rem;
+}
+
+.md-typeset .writer-stats dt {
+  margin: 0;
+  color: var(--base-500);
+  font-weight: 400;
+}
+
+.md-typeset .writer-stats dd {
+  margin: 0;
+  color: var(--base-200);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* Material indents lists; the checks in the sidebar sit flush. */
 .md-typeset .writer-side ul.writer-checks {
   margin: 0;

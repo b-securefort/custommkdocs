@@ -17,6 +17,15 @@ their text, so the JSON would be run as JavaScript and the element lost.
               publish instructions point at
     bundle    extra.writer too: the S3 bucket bundles are uploaded to and the
               pipeline that adds them to the repository (pipelines/ingest-bundle.yml)
+    sources   whether the site publishes its pages' Markdown (below)
+
+So that any page can be opened on the Write page and changed there, the
+build also copies each published page's Markdown to _writer/src/<path in
+docs/>, and gives every other page an "Edit in the page writer" button that
+opens it there. Both only where the Write page itself is: with `draft: prod`
+on docs/write.md, production gets neither, and readers there can't edit or
+read the Markdown; staging gets both. Set extra.writer.sources to false to
+leave them out everywhere.
 
 The site is static, so this is built once and the writer needs no server.
 """
@@ -26,8 +35,15 @@ import json
 import logging
 import os
 import posixpath
+from urllib.parse import quote
+
+from mkdocs.utils import get_relative_url
+from mkdocs.utils.meta import get_data
 
 log = logging.getLogger("mkdocs.hooks.writer")
+
+# Where the pages' Markdown is published, under the site.
+SOURCES_DIR = "_writer/src"
 
 # Offered in the card icon picker. Any other Material icon can still be typed.
 CARD_ICONS = [
@@ -71,6 +87,13 @@ UI_ICONS = [
     "paperclip", "folder-zip-outline", "pencil-outline", "file-outline",
     "puzzle-outline", "file-cog-outline", "view-split-vertical", "text-box-edit-outline",
     "drag-vertical", "chevron-left", "fullscreen", "fullscreen-exit", "delete-sweep-outline",
+    "undo", "redo", "format-strikethrough-variant", "format-color-highlight", "format-quote-close",
+    "format-list-checks", "table-plus", "minus", "format-paragraph",
+    "format-header-2", "format-header-3", "format-header-4",
+    "file-multiple-outline", "history", "format-list-text", "help-circle-outline", "crop",
+    "image-edit-outline", "web", "microsoft-azure-devops", "content-paste", "file-document-edit-outline",
+    "chevron-down", "rectangle-outline", "blur", "file-compare", "console-line", "backup-restore",
+    "check", "folder-open-outline", "menu-down", "arrow-collapse-vertical",
 ]
 
 # Same names and icons as hooks/page_info.py.
@@ -81,6 +104,12 @@ PLATFORMS = {
 }
 
 _files = None
+# The Write page's address, when this build publishes it.
+_writer_url = None
+# Whether the Write page was built this time, so the Markdown it opens is
+# published too. Under `mkdocs serve` a draft Write page is built although
+# it isn't published, and then this is true and _writer_url isn't.
+_writer_built = False
 
 
 def _icon(name, config):
@@ -93,15 +122,32 @@ def _icon(name, config):
     return ""
 
 
+def _sources(config):
+    return (config.extra.get("writer") or {}).get("sources", True) is not False
+
+
 def on_files(files, config):
-    global _files
+    # After hooks/page_visibility.py, which marks `draft` pages: those aren't
+    # among the documentation pages, so a draft Write page gives no address.
+    global _files, _writer_url, _writer_built
     _files = files
+    _writer_url = None
+    _writer_built = False
+    for file in files.documentation_pages():
+        _, meta = get_data(file.content_string)
+        if meta.get("writer"):
+            _writer_url = file.url
     return files
 
 
 def on_page_context(context, page, config, nav):
+    global _writer_built
     if not page.meta.get("writer"):
+        # The page's "Edit in the page writer" button (overrides/partials/actions.html).
+        if _writer_url is not None and _sources(config):
+            page.meta["writer_edit"] = get_relative_url(_writer_url, page.url) + "?edit=" + quote(page.file.src_uri)
         return context
+    _writer_built = True
 
     pages = []
     titles = {}
@@ -145,7 +191,23 @@ def on_page_context(context, page, config, nav):
         "review_months": config.extra.get("review_months", 6),
         "repo": repo,
         "bundle": bundle,
+        "sources": _sources(config),
     }
     payload = html.escape(json.dumps(data, separators=(",", ":")), quote=True)
     page.content = f'<div id="writer-data" hidden data-json="{payload}"></div>' + page.content
     return context
+
+
+def on_post_build(config):
+    """Each published page's Markdown, as written, for the writer to open.
+    Only when the Write page was built: without it, nothing needs them."""
+    if not _sources(config) or _files is None or not _writer_built:
+        return
+    root = os.path.join(config.site_dir, *SOURCES_DIR.split("/"))
+    for file in _files.documentation_pages():
+        if file.page is None or file.page.meta.get("writer"):
+            continue
+        target = os.path.join(root, *file.src_uri.split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8", newline="\n") as out:
+            out.write(file.content_string)
