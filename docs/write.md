@@ -1,6 +1,7 @@
 ---
 title: Write a page
 writer: true
+unlisted: true
 hide:
   - navigation
   - toc
