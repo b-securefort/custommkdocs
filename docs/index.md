@@ -11,6 +11,7 @@ hide:
 
 hero:
   logo: true                        # the logo among drifting clouds, on the right
+  caption: Cloud Services           # a label under the logo (or image)
   eyebrow: Six themes · four button styles
   title: Docs that feel alive
   highlight: alive

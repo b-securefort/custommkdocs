@@ -282,15 +282,21 @@
     toggle.innerHTML = ICON_PALETTE;
 
     var popover = el("div", "appearance-popover", { id: "appearance-popover", hidden: "" });
+    var head = el("div", "appearance-popover__head");
     var label = el("span", "appearance-popover__label", { id: "appearance-popover-label" });
     label.textContent = "Theme";
+    // The swatch's name, beside the label. Not a title tooltip: Material turns
+    // those into tooltips that open under the focused swatch and cover the
+    // link below. Screen readers get the name from each swatch's aria-label.
+    var name = el("span", "appearance-popover__name", { "aria-hidden": "true" });
+    head.appendChild(label);
+    head.appendChild(name);
     var group = el("div", "swatch-row", { role: "radiogroup", "aria-labelledby": "appearance-popover-label" });
 
     THEME_CHOICES.forEach(function (theme) {
       var swatch = el("button", "swatch", {
         type: "button",
         role: "radio",
-        title: theme.label,
         "aria-label": theme.label,
         "data-option": theme.id,
       });
@@ -325,10 +331,28 @@
       swatches[next].click();
     });
 
+    // The pointed-at or focused swatch's name, else the chosen one's.
+    function showName(swatch) {
+      swatch = swatch || group.querySelector('.swatch[aria-checked="true"]');
+      name.textContent = swatch ? swatch.getAttribute("aria-label") : "";
+    }
+    group.addEventListener("mouseover", function (event) {
+      showName(event.target.closest(".swatch"));
+    });
+    group.addEventListener("focusin", function (event) {
+      showName(event.target.closest(".swatch"));
+    });
+    group.addEventListener("mouseleave", function () {
+      showName(group.contains(document.activeElement) ? document.activeElement : null);
+    });
+    group.addEventListener("focusout", function () {
+      showName(null);
+    });
+
     var link = el("a", "appearance-popover__link", { href: appearanceUrl });
     link.innerHTML = "<span>Buttons, motion &amp; more</span><span aria-hidden=\"true\">&rarr;</span>";
 
-    popover.appendChild(label);
+    popover.appendChild(head);
     popover.appendChild(group);
     popover.appendChild(link);
     wrap.appendChild(toggle);
@@ -341,6 +365,7 @@
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
       if (open) {
         popover.removeAttribute("hidden");
+        showName(null);
         var checked = popover.querySelector('.swatch[aria-checked="true"]');
         if (checked) checked.focus();
       } else {
@@ -874,9 +899,22 @@
     }, 1600);
   });
 
+  /* ── Logo: no tooltip. Material titles the drawer's logo link with the site
+     name, which the name beside it already shows; aria-label still names it.
+     The header logo's tooltip is Material's own, hidden in components.css
+     (it restores the title it read at startup, so removing it here won't
+     stick). ── */
+
+  function untitleLogos() {
+    document.querySelectorAll(".md-nav__button.md-logo[title]").forEach(function (link) {
+      link.removeAttribute("title");
+    });
+  }
+
   /* ── Mount on every page (Material's instant navigation re-emits document$) ── */
 
   function mountAll() {
+    untitleLogos();
     mountHeaderSwitch();
     mountScrollProgress();
     mountAppearancePanel();

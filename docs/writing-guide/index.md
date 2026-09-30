@@ -230,7 +230,7 @@ The home page is laid out by the site; you only change the text. Everything it s
 
 | Setting      | What it is                                                              |
 | ------------ | ----------------------------------------------------------------------- |
-| `hero`       | The big banner: `title`, the word(s) in it to colour (`highlight`), a small label above it (`eyebrow`), a sentence (`text`), `buttons`, and on the right either `logo: true` (the site logo among drifting clouds) or an `image` |
+| `hero`       | The big banner: `title`, the word(s) in it to colour (`highlight`), a small label above it (`eyebrow`), a sentence (`text`), `buttons`, and on the right either `logo: true` (the site logo among drifting clouds) or an `image`, with an optional label under it (`caption`) |
 | `features`   | The grid of cards: a `title`, a sentence under it (`text`), then `items`, each with an `icon`, `title`, `text` and optional `link` |
 | `highlights` | Rows that alternate picture and text: `title`, then `items`, each with a `title`, `text`, an `image` (a screenshot works best) or an `icon`, and an optional `link` with `link_text` |
 | `cta`        | The closing band: `title`, `text` and `buttons` |

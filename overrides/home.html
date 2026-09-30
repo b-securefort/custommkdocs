@@ -2,7 +2,7 @@
     A page opts in with `template: home.html`; everything shown comes from its
     front matter (see docs/index.md), so editors never touch this file:
 
-      hero        logo, title, highlight, eyebrow, text, buttons, image, image_alt
+      hero        logo, title, highlight, eyebrow, text, buttons, image, image_alt, caption
       features    title, text, items: icon, title, text, link
       highlights  title, text, items: title, text, icon or image, link, link_text
       cta         title, text, buttons
@@ -39,6 +39,11 @@
   {{ super() }}
   {% set meta = page.meta %}
 
+  {#- Material measures scroll against the first [data-md-component=main]
+      (back-to-top shows only past its top, the header shadow likewise).
+      Its own <main> sits below all of these sections, so this wrapper
+      takes that role on the home page. -#}
+  <div class="home" data-md-component="main">
   {% set hero = meta.hero or {} %}
   <section class="home-hero md-typeset">
     <div class="hero__glow" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -72,6 +77,9 @@
               <span class="sky-cloud sky-cloud--4"></span>
             </div>
           </div>
+        {% endif %}
+        {% if hero.caption and (hero.image or hero.logo) %}
+          <p class="home-hero__caption">{{ hero.caption | e }}</p>
         {% endif %}
       </div>
     </div>
@@ -145,6 +153,7 @@
       </div>
     </section>
   {% endif %}
+  </div>
 {% endblock %}
 
 {#- Everything is above; the regular content column stays empty. -#}
