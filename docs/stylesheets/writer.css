@@ -63,13 +63,23 @@
 }
 
 .writer-status {
+  /* Takes the room that's left and never claims more, so it can't push the
+     other controls onto a second line; the full text is in its title. */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
   color: var(--base-500);
   font-size: 0.65rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
+/* A warning is worth a line of its own rather than being cut off. */
 .writer-status--warn {
+  flex-basis: auto;
   color: var(--writer-warn);
   font-weight: 600;
+  white-space: normal;
 }
 
 /* Markdown / Side by side / Preview */
@@ -745,6 +755,20 @@
   color: var(--base-100);
 }
 
+/* Group headings, as in the Components sidebar. */
+.md-typeset .writer-editor__host .cm-tooltip-autocomplete > ul > completion-section {
+  display: block;
+  margin: 0;
+  padding: 0.45rem 0.6rem 0.15rem;
+  border: 0;
+  color: var(--base-500);
+  font-size: 0.6rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 1;
+}
+
 .writer-editor__host .cm-completionLabel {
   color: var(--base-100);
   font-weight: 600;
@@ -761,6 +785,40 @@
   font-style: normal;
   font-size: 0.92em;
 }
+
+/* Components after "/": the sidebar's icon for each. */
+.writer-completion-icon {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  color: var(--accent-light);
+  font-size: 0.9rem;
+}
+
+/* Callout types: each one's icon, in its colour on the page. */
+.writer-callout-icon {
+  flex: none;
+  align-self: center;
+  width: 1rem;
+  height: 1rem;
+  background-color: var(--callout, var(--base-400));
+  -webkit-mask: var(--callout-icon) center / contain no-repeat;
+  mask: var(--callout-icon) center / contain no-repeat;
+}
+
+.writer-callout-icon--note { --callout: #448aff; --callout-icon: var(--md-admonition-icon--note); }
+.writer-callout-icon--info { --callout: #00b8d4; --callout-icon: var(--md-admonition-icon--info); }
+.writer-callout-icon--tip { --callout: #00bfa5; --callout-icon: var(--md-admonition-icon--tip); }
+.writer-callout-icon--success { --callout: #00c853; --callout-icon: var(--md-admonition-icon--success); }
+.writer-callout-icon--warning { --callout: #ff9100; --callout-icon: var(--md-admonition-icon--warning); }
+.writer-callout-icon--danger { --callout: #ff1744; --callout-icon: var(--md-admonition-icon--danger); }
+.writer-callout-icon--example { --callout: #7c4dff; --callout-icon: var(--md-admonition-icon--example); }
+.writer-callout-icon--question { --callout: #64dd17; --callout-icon: var(--md-admonition-icon--question); }
+.writer-callout-icon--permissions { --callout: var(--hue-blue); --callout-icon: var(--md-admonition-icon--permissions); }
+.writer-callout-icon--cost { --callout: var(--hue-teal); --callout-icon: var(--md-admonition-icon--cost); }
+.writer-callout-icon--security { --callout: var(--hue-rose); --callout-icon: var(--md-admonition-icon--security); }
+.writer-callout-icon--preview { --callout: var(--warning); --callout-icon: var(--md-admonition-icon--preview); }
+.writer-callout-icon--troubleshoot { --callout: var(--hue-violet); --callout-icon: var(--md-admonition-icon--troubleshoot); }
 
 .writer-editor__host .cm-completionInfo {
   padding: 0.4rem;

@@ -70,7 +70,7 @@ UI_ICONS = [
     "timeline-text-outline", "magnify", "eye-outline", "source-pull",
     "paperclip", "folder-zip-outline", "pencil-outline", "file-outline",
     "puzzle-outline", "file-cog-outline", "view-split-vertical", "text-box-edit-outline",
-    "drag-vertical", "chevron-left", "fullscreen", "fullscreen-exit",
+    "drag-vertical", "chevron-left", "fullscreen", "fullscreen-exit", "delete-sweep-outline",
 ]
 
 # Same names and icons as hooks/page_info.py.

@@ -3854,6 +3854,7 @@
           copyText(toMarkdown(), "Markdown copied: the whole file, front matter and title included.");
         }),
         iconButton("download", "Download the .md on its own", false, download),
+        iconButton("delete-sweep-outline", "Clear the page: title, text, settings, images and files (Undo brings it back)", false, clearPage),
         ui.focusButton,
         button("Add to site", "source-pull", "md-button--ghost md-button--sm", openPublish),
         button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm", downloadBundle),
@@ -4477,6 +4478,27 @@
     ui.title.focus();
   }
 
+  // Empties the page, settings and all; the toast's Undo puts it back.
+  function clearPage() {
+    if (!hasContent() && !hasAssets()) return;
+    var before = state;
+    closeForm(false);
+    state = newState(emptyMeta(), "");
+    state.meta.at = { folder: folderPath(), assets: assetDir() };
+    storeAllAssets();
+    loadPage();
+    ui.welcomeDone = false;
+    updateWelcome();
+    changed();
+    toast("Page cleared.", "Undo", function () {
+      closeForm(false);
+      state = before;
+      storeAllAssets();
+      loadPage();
+      changed();
+    });
+  }
+
   function openFile(file) {
     if (/\.zip$/i.test(file.name)) {
       openBundle(file);
@@ -4726,7 +4748,10 @@
       CM.EditorView.lineWrapping,
       CM.markdown({ base: CM.markdownLanguage, codeLanguages: CM.codeLanguages }),
       CM.syntaxHighlighting(highlightStyle(CM)),
-      CM.autocompletion({ override: completionSources(CM), icons: false, activateOnTyping: true, closeOnBlur: true, maxRenderedOptions: 60 }),
+      // Tab takes the highlighted suggestion, ahead of the snippet's next
+      // field and indenting; with no list open it does those as before.
+      CM.Prec.highest(CM.keymap.of([{ key: "Tab", run: CM.acceptCompletion }])),
+      CM.autocompletion({ override: completionSources(CM), icons: false, addToOptions: [{ render: completionIcon, position: 20 }], activateOnTyping: true, closeOnBlur: true, maxRenderedOptions: 60 }),
       CM.linter(lintSource, { delay: 400 }),
       CM.lintGutter(),
       CM.search({ top: true }),
@@ -4774,6 +4799,16 @@
         },
       },
     ];
+  }
+
+  // Beside a suggestion's name: a callout's own icon and colour, or a
+  // component's icon from the sidebar.
+  function completionIcon(completion) {
+    var need = completion.need;
+    var kind = completion.callout || (need && need.type === "callout" && need.preset && need.preset.kind);
+    if (kind) return h("span", { class: "writer-callout-icon writer-callout-icon--" + kind, "aria-hidden": "true" });
+    if (need) return h("span", { class: "writer-completion-icon" }, [icon(TYPES[need.type].icon)]);
+    return null;
   }
 
   function onEditorUpdate(u) {
@@ -5088,7 +5123,10 @@
       return line.text.slice(ctx.pos - line.from);
     }
 
-    // "/" at the start of a line: the components, by name or need.
+    // "/" at the start of a line: the components, by name or need, with the
+    // callouts in a group of their own after the rest.
+    var COMPONENT_SECTION = { name: "Components", rank: 0 };
+    var CALLOUT_SECTION = { name: "Callouts", rank: 1 };
     function components(ctx) {
       var m = ctx.matchBefore(/^\s*\/[\w -]*$/);
       if (!m || inFence(ctx.state.doc, ctx.pos)) return null;
@@ -5101,6 +5139,8 @@
           label: n.name,
           detail: n.need,
           type: "component",
+          need: n,
+          section: n.type === "callout" ? CALLOUT_SECTION : COMPONENT_SECTION,
           boost: q && n.name.toLowerCase().indexOf(q) === 0 ? 1 : 0,
           apply: function (view, completion, from, to) {
             var doc = view.state.doc;
@@ -5138,6 +5178,7 @@
             label: k.id,
             detail: k.hint,
             type: "keyword",
+            callout: k.id,
             apply: alone
               ? function (view, completion, from, to) {
                   addHints(body);
@@ -5169,16 +5210,42 @@
       if (!m || inFence(ctx.state.doc, ctx.pos)) return null;
       var word = /[\w+#-]*$/.exec(m.text)[0];
       if (!word && !ctx.explicit) return null;
+      var open = /^(\s*)(`{3,}|~{3,})/.exec(m.text);
+      var close = !rest(ctx).trim() && !fenceClosed(ctx.state.doc, ctx.pos, open[2]);
+      function option(label, detail, info) {
+        return {
+          label: label,
+          type: "type",
+          detail: detail,
+          // A new block gets its closing fence too, with the cursor inside.
+          apply: function (view, completion, from, to) {
+            var text = info || label;
+            var cursor = from + text.length;
+            if (close) {
+              text += "\n" + open[1] + "\n" + open[1] + open[2];
+              cursor += 1 + open[1].length;
+            }
+            view.dispatch({ changes: { from: from, to: to, insert: text }, selection: { anchor: cursor }, userEvent: "input.complete" });
+          },
+        };
+      }
       return {
         from: ctx.pos - word.length,
         validFor: /^[\w+#-]*$/,
         options: LANGS.map(function (lang) {
-          return { label: lang, type: "type" };
-        }).concat([
-          { label: "mermaid", type: "type", detail: "a diagram" },
-          { label: "output", type: "type", detail: "command output", apply: "{ .text .output }" },
-        ]),
+          return option(lang);
+        }).concat([option("mermaid", "a diagram"), option("output", "command output", "{ .text .output }")]),
       };
+    }
+
+    // Whether the fence opened on pos's line already has its closing one:
+    // the next fence of its kind below is a bare one.
+    function fenceClosed(doc, pos, fence) {
+      for (var n = doc.lineAt(pos).number + 1; n <= doc.lines; n++) {
+        var m = /^\s*(`{3,}|~{3,})(.*)$/.exec(doc.line(n).text);
+        if (m && m[1][0] === fence[0] && m[1].length >= fence.length) return !m[2].trim();
+      }
+      return false;
     }
 
     // In a link or image: pages, headings on this page, images and files.
@@ -5932,7 +5999,7 @@
   function updateStatus() {
     if (!ui.status) return;
     var assetsLost = state.assetsSaved === false && hasAssets();
-    ui.status.textContent = ui.saveFailed
+    ui.status.textContent = ui.status.title = ui.saveFailed
       ? "Can't keep a draft in this browser: download before you leave."
       : assetsLost
         ? "Can't keep the images and files in this browser: download the bundle before you leave."
