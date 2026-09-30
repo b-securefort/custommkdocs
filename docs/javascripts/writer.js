@@ -3804,7 +3804,7 @@
       root.textContent = "The page writer needs hooks/writer.py in mkdocs.yml.";
       return;
     }
-    data = JSON.parse(source.textContent);
+    data = JSON.parse(source.getAttribute("data-json"));
     root.setAttribute("data-mounted", "");
     root.innerHTML = "";
     ui = { root: root };

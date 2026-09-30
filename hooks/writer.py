@@ -1,7 +1,10 @@
 """Hand the page writer (docs/write.md) what it can't work out in the browser.
 
-A page with `writer: true` in its front matter gets a JSON block at the top of
-its content, which javascripts/writer.js reads:
+A page with `writer: true` in its front matter gets a hidden element at the top
+of its content with this JSON in its data-json attribute, which
+javascripts/writer.js reads. Not a <script type="application/json">: Material's
+instant navigation re-creates the scripts in a page it swaps in, keeping only
+their text, so the JSON would be run as JavaScript and the element lost.
 
     folders   where a new page can go, with the title each one has on the site
     pages     every page, so links can be picked instead of typed
@@ -18,6 +21,7 @@ its content, which javascripts/writer.js reads:
 The site is static, so this is built once and the writer needs no server.
 """
 
+import html
 import json
 import logging
 import os
@@ -142,6 +146,6 @@ def on_page_context(context, page, config, nav):
         "repo": repo,
         "bundle": bundle,
     }
-    payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
-    page.content = f'<script type="application/json" id="writer-data">{payload}</script>' + page.content
+    payload = html.escape(json.dumps(data, separators=(",", ":")), quote=True)
+    page.content = f'<div id="writer-data" hidden data-json="{payload}"></div>' + page.content
     return context
