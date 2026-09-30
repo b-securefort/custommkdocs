@@ -1,43 +1,48 @@
 /* ── Page writer (docs/write.md, javascripts/writer.js) ──
-   Editor on the left, output on the right; stacked on narrow screens. The
-   preview sits inside .md-typeset like any page, so components are drawn
-   by the site's own styles. The editor avoids typeset elements (p, ul, h*)
-   so those styles don't leak into the form. */
+   A bar and the page title across the top, then the work area: a rail of
+   sidebar panels, the Markdown (CodeMirror), the preview, and a component's
+   form when it's asked for. The preview sits inside .md-typeset like any
+   page, so components are drawn by the site's own styles. The rest avoids
+   typeset elements (p, ul, h*) so those styles don't leak in. */
 
-/* Checks and warnings: amber reads as "look at this" in every theme. */
+/* Checks and warnings: amber reads as "look at this" in every theme. The
+   editor's colours come from the theme too: the code palette in themes.css
+   for code, these for the Markdown around it. */
 :root {
   --writer-warn: #d97706;
+  --writer-cm-heading: var(--accent-light);
+  --writer-cm-strong: var(--base-100);
+  --writer-cm-link: var(--accent-light);
+  --writer-cm-url: var(--md-code-hl-string-color);
+  --writer-cm-code: var(--md-code-hl-special-color);
+  --writer-cm-quote: var(--base-400);
+  --writer-cm-mark: var(--base-500);
+  --writer-rail: 2.6rem;
+  --writer-side: 16.5rem;
+  --writer-form: 25rem;
 }
 
 /* The writer page hides both sidebars; give it the room. */
 .md-main__inner:has(#writer) {
-  max-width: 100rem;
+  max-width: 120rem;
 }
 
 .md-typeset .writer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1rem 1.5rem;
-  align-items: start;
-  margin-top: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 1rem;
   font-size: 0.7rem;
-}
-
-@media screen and (max-width: 76.1875em) {
-  .md-typeset .writer {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* ── Top bar ── */
 
 .writer__bar {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.6rem;
+  padding: 0.45rem 0.6rem;
   border: 1px solid var(--base-700);
   border-radius: 10px;
   background: var(--base-950);
@@ -51,8 +56,10 @@
   margin-right: 0.3em;
 }
 
-.writer__download {
-  margin-left: auto !important;
+.writer__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .writer-status {
@@ -65,7 +72,893 @@
   font-weight: 600;
 }
 
+/* Markdown / Side by side / Preview */
+.writer-views {
+  display: inline-flex;
+  margin-left: auto;
+  padding: 0.15rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-900);
+}
+
+.writer-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 0.55rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--base-400);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.writer-view:hover {
+  color: var(--base-100);
+}
+
+.writer-view[aria-pressed="true"] {
+  background: var(--base-800);
+  color: var(--base-100);
+  box-shadow: var(--shadow-sm), inset 0 -2px 0 var(--accent);
+}
+
+.writer-view:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media screen and (max-width: 76.1875em) {
+  .writer-view > span:not(.writer-icon) {
+    display: none;
+  }
+}
+
+/* No room side by side on a small screen: Markdown or preview. */
+@media screen and (max-width: 59.9375em) {
+  .writer-view--split {
+    display: none;
+  }
+}
+
+/* ── The title ── */
+
+.writer-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.8rem;
+  padding: 0 0.2rem;
+}
+
+.writer-title__hash {
+  color: var(--writer-cm-mark);
+  font-family: var(--md-code-font-family);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.md-typeset .writer-title__input {
+  flex: 1 1 18rem;
+  min-width: 0;
+  padding: 0.2rem 0;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  background: none;
+  color: var(--base-100);
+  font: inherit;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset .writer-title__input::placeholder {
+  color: var(--base-600);
+}
+
+.md-typeset .writer-title__input:hover {
+  border-bottom-color: var(--base-600);
+}
+
+.md-typeset .writer-title__input:focus {
+  border-bottom-color: var(--accent);
+  outline: none;
+}
+
+.writer-title__path {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--base-700);
+  border-radius: 999px;
+  background: var(--base-900);
+  color: var(--base-400);
+  font: inherit;
+  font-size: 0.64rem;
+  cursor: pointer;
+}
+
+.writer-title__path:hover,
+.writer-title__path:focus-visible {
+  border-color: var(--accent);
+  color: var(--base-100);
+  outline: none;
+}
+
+.md-typeset .writer-title__path code {
+  overflow: hidden;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writer-title__tag {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--writer-warn) 18%, transparent);
+  color: var(--base-100);
+  font-size: 0.58rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* ── The work area ── */
+
+.writer__work {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--writer-rail) auto minmax(0, 1fr) minmax(0, 1fr);
+  height: calc(100vh - 7.5rem);
+  height: calc(100dvh - 7.5rem);
+  min-height: 26rem;
+  border: 1px solid var(--base-700);
+  border-radius: 10px;
+  background: var(--base-900);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* Each in its own column, so a closed or floating sidebar leaves the rest
+   where they are. */
+.writer-rail {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.writer-side {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.writer-editor {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.writer-previewpane {
+  grid-column: 4;
+  grid-row: 1;
+}
+
+.writer[data-view="markdown"] .writer__work {
+  grid-template-columns: var(--writer-rail) auto minmax(0, 1fr) 0;
+}
+
+.writer[data-view="preview"] .writer__work {
+  grid-template-columns: var(--writer-rail) auto 0 minmax(0, 1fr);
+}
+
+.writer[data-view="markdown"] .writer-previewpane,
+.writer[data-view="preview"] .writer-editor {
+  visibility: hidden;
+}
+
+@media screen and (max-width: 59.9375em) {
+  .writer[data-view="split"] .writer__work {
+    grid-template-columns: var(--writer-rail) auto minmax(0, 1fr) 0;
+  }
+
+  .writer[data-view="split"] .writer-previewpane {
+    visibility: hidden;
+  }
+}
+
+/* Focus: the writer fills the window, over the site's header. */
+.writer-focus-lock,
+.writer-focus-lock body {
+  overflow: hidden;
+}
+
+.md-typeset .writer.writer--focus {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  margin: 0;
+  padding: 0.6rem;
+  background: var(--md-default-bg-color);
+}
+
+.writer--focus .writer__work {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+/* The rail */
+.writer-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.45rem 0;
+  border-right: 1px solid var(--base-700);
+  background: var(--base-950);
+}
+
+.writer-rail__btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--base-500);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.writer-rail__btn:hover {
+  background: var(--base-800);
+  color: var(--base-100);
+}
+
+.writer-rail__btn[aria-pressed="true"] {
+  background: var(--base-800);
+  color: var(--accent-light);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.writer-rail__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.writer-rail__count {
+  position: absolute;
+  top: 0.05rem;
+  right: 0.05rem;
+  min-width: 0.9rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  background: var(--writer-warn);
+  color: #fff;
+  font-size: 0.52rem;
+  font-weight: 700;
+  line-height: 0.9rem;
+  text-align: center;
+}
+
+.writer-rail__count[hidden] {
+  display: none;
+}
+
+/* The sidebar panel */
+.writer-side {
+  display: flex;
+  flex-direction: column;
+  width: var(--writer-side);
+  min-height: 0;
+  border-right: 1px solid var(--base-700);
+  background: var(--base-900);
+}
+
+.writer:not([data-side]) .writer-side,
+.writer[data-side=""] .writer-side {
+  display: none;
+}
+
+.writer-side__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.4rem 0.35rem 0.75rem;
+}
+
+.writer-side__title {
+  color: var(--base-100);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.writer-side__body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 0.75rem 0.9rem;
+  overflow: auto;
+}
+
+.writer-side__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.writer-side__panel[hidden] {
+  display: none;
+}
+
+.writer-side__group {
+  margin-top: 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--base-700);
+  color: var(--base-400);
+  font-size: 0.64rem;
+  font-weight: 650;
+}
+
+.md-typeset .writer-side__foot {
+  margin: 0.2rem 0 0;
+  color: var(--base-500);
+  font-size: 0.62rem;
+}
+
+/* Over the editor on a narrow screen, rather than squeezing it. */
+@media screen and (max-width: 59.9375em) {
+  .writer-side {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--writer-rail);
+    z-index: 3;
+    width: min(var(--writer-side), calc(100% - var(--writer-rail)));
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/* Components in the sidebar: drag them in, or click to add at the cursor. */
+.writer-needs--side .writer-need {
+  align-items: center;
+  padding: 0.35rem 0.45rem;
+  cursor: grab;
+}
+
+.writer-needs--side .writer-need:active {
+  cursor: grabbing;
+}
+
+.writer-needs--side .writer-need .writer-icon {
+  margin-top: 0;
+}
+
+.writer-needs--side .writer-need__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.writer-needs--side .writer-need__name {
+  color: var(--base-100);
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.writer-needs--side .writer-need__need {
+  color: var(--base-500);
+  font-size: 0.6rem;
+  font-weight: 400;
+}
+
+.writer-need__drag {
+  display: inline-flex;
+  width: 0.9rem;
+  color: var(--base-600);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease-out);
+}
+
+.writer-need__drag svg {
+  width: 100%;
+  fill: currentColor;
+}
+
+.writer-need:hover .writer-need__drag,
+.writer-need:focus-visible .writer-need__drag {
+  opacity: 1;
+}
+
+.writer-side .writer-asset {
+  cursor: grab;
+}
+
+.writer-side .writer-assets__list {
+  gap: 0.35rem;
+}
+
+/* ── The Markdown ── */
+
+.writer-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--base-950);
+}
+
+.writer-editor__tools {
+  flex-wrap: nowrap;
+  align-items: center;
+  margin: 0;
+  padding: 0.25rem 0.4rem;
+  border-bottom: 1px solid var(--base-700);
+  overflow-x: auto;
+}
+
+.writer-editor__hint {
+  margin-left: auto;
+  padding-left: 0.6rem;
+  color: var(--base-500);
+  font-size: 0.58rem;
+  white-space: nowrap;
+}
+
+.md-typeset .writer-editor__hint kbd {
+  padding: 0 0.3em;
+  border: 1px solid var(--base-700);
+  border-radius: 3px;
+  background: none;
+  box-shadow: none;
+  color: var(--base-400);
+  font-size: 0.95em;
+  line-height: 1.3;
+  vertical-align: baseline;
+}
+
+/* Only when the Markdown has room for it beside the buttons. */
+.writer-editor {
+  container-type: inline-size;
+}
+
+@container (max-width: 46rem) {
+  .writer-editor__hint {
+    display: none;
+  }
+}
+
+.writer-editor__host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.writer-editor__loading {
+  padding: 1rem;
+  color: var(--base-500);
+}
+
+.md-typeset .writer-editor__fallback {
+  flex: 1;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  font-family: var(--md-code-font-family);
+  resize: none;
+}
+
+.writer-editor__host .cm-editor {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  background: var(--base-950);
+  color: var(--base-200);
+  font-size: 0.74rem;
+}
+
+.writer-editor__host .cm-editor.cm-focused {
+  outline: none;
+}
+
+.writer-editor__host .cm-scroller {
+  font-family: var(--md-code-font-family);
+  line-height: 1.65;
+}
+
+.writer-editor__host .cm-content {
+  padding: 0.6rem 0 40vh;
+  caret-color: var(--accent);
+}
+
+.writer-editor__host .cm-line {
+  padding: 0 1rem 0 0.7rem;
+}
+
+.writer-editor__host .cm-cursor {
+  border-left: 2px solid var(--accent);
+}
+
+.writer-editor__host .cm-selectionBackground,
+.writer-editor__host .cm-focused .cm-selectionBackground,
+.writer-editor__host .cm-content ::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent) !important;
+}
+
+.writer-editor__host .cm-activeLine {
+  background: color-mix(in srgb, var(--base-800) 55%, transparent);
+}
+
+.writer-editor__host .cm-selectionMatch {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.writer-editor__host .cm-gutters {
+  border-right: 1px solid var(--base-800);
+  background: var(--base-950);
+  color: var(--base-600);
+  font-size: 0.64rem;
+}
+
+.writer-editor__host .cm-activeLineGutter {
+  background: transparent;
+  color: var(--base-300);
+}
+
+.writer-editor__host .cm-placeholder {
+  color: var(--base-600);
+  font-style: italic;
+}
+
+/* Components: a tint down the side of each; stronger for the one the
+   cursor is in, with its Edit button. */
+.writer-editor__host .cm-line.cm-comp {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.writer-editor__host .cm-line.cm-comp--active {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.writer-editor__host .cm-line.cm-comp--first {
+  position: relative;
+}
+
+.md-typeset .cm-writer-chip {
+  position: absolute;
+  top: 0.1rem;
+  right: 0.5rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  background: var(--base-900);
+  color: var(--accent-light);
+  font-family: var(--md-text-font-family);
+  font-size: 0.6rem;
+  font-weight: 650;
+  line-height: 1.5;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  animation: writer-chip 0.18s var(--ease-out);
+}
+
+.md-typeset .cm-writer-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--base-900));
+  color: var(--base-100);
+}
+
+@keyframes writer-chip {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+/* Where a dragged component will land. */
+.writer-editor__host .cm-line.cm-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.writer-editor__host .cm-line.cm-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* pymdownx syntax the Markdown grammar doesn't know. */
+.writer-editor__host .cm-pm-admonition,
+.writer-editor__host .cm-pm-admonition * {
+  color: var(--md-code-hl-keyword-color);
+  font-weight: 650;
+}
+
+.writer-editor__host .cm-pm-tab,
+.writer-editor__host .cm-pm-tab * {
+  color: var(--md-code-hl-function-color);
+  font-weight: 650;
+}
+
+.writer-editor__host .cm-pm-attr,
+.writer-editor__host .cm-pm-attr * {
+  color: var(--writer-cm-mark);
+}
+
+.writer-editor__host .cm-pm-keys,
+.writer-editor__host .cm-pm-placeholder,
+.writer-editor__host .cm-pm-placeholder * {
+  color: var(--md-code-hl-constant-color);
+}
+
+.writer-editor__host .cm-pm-def {
+  color: var(--writer-cm-mark);
+}
+
+/* Suggestions, lint and search sit inside .md-typeset: undo its lists. */
+.md-typeset .writer-editor__host .cm-tooltip {
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-900);
+  color: var(--base-200);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.md-typeset .writer-editor__host .cm-tooltip ul,
+.md-typeset .writer-editor__host .cm-tooltip li,
+.md-typeset .writer-editor__host .cm-panel ul,
+.md-typeset .writer-editor__host .cm-panel li {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset .writer-editor__host .cm-tooltip-autocomplete > ul {
+  max-height: 16rem;
+  font-family: var(--md-text-font-family);
+  font-size: 0.68rem;
+}
+
+.md-typeset .writer-editor__host .cm-tooltip-autocomplete > ul > li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.25rem 0.6rem;
+  line-height: 1.4;
+}
+
+.md-typeset .writer-editor__host .cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--base-100);
+}
+
+.writer-editor__host .cm-completionLabel {
+  color: var(--base-100);
+  font-weight: 600;
+}
+
+.writer-editor__host .cm-completionMatchedText {
+  color: var(--accent-light);
+  text-decoration: none;
+}
+
+.writer-editor__host .cm-completionDetail {
+  margin-left: auto;
+  color: var(--base-500);
+  font-style: normal;
+  font-size: 0.92em;
+}
+
+.writer-editor__host .cm-completionInfo {
+  padding: 0.4rem;
+}
+
+.writer-card-icon--info {
+  width: 2rem;
+  height: 2rem;
+}
+
+.writer-editor__host .cm-tooltip-lint {
+  font-family: var(--md-text-font-family);
+  font-size: 0.66rem;
+}
+
+.writer-editor__host .cm-diagnostic {
+  padding: 0.35rem 0.6rem;
+  border-left-width: 3px;
+}
+
+.writer-editor__host .cm-diagnostic-warning {
+  border-left-color: var(--writer-warn);
+}
+
+.writer-editor__host .cm-diagnostic-info {
+  border-left-color: var(--accent);
+}
+
+.writer-editor__host .cm-lintRange-warning {
+  background-image: none;
+  text-decoration: underline wavy var(--writer-warn);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.writer-editor__host .cm-lintRange-info {
+  background-image: none;
+  text-decoration: underline dotted var(--accent);
+  text-underline-offset: 3px;
+}
+
+.writer-editor__host .cm-lint-marker-warning,
+.writer-editor__host .cm-lint-marker-info {
+  width: 0.7em;
+  height: 0.7em;
+  margin-top: 0.35em;
+  border-radius: 50%;
+  content: none;
+}
+
+.writer-editor__host .cm-lint-marker-warning {
+  background: var(--writer-warn);
+}
+
+.writer-editor__host .cm-lint-marker-info {
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.writer-editor__host .cm-panels {
+  border-color: var(--base-700);
+  background: var(--base-900);
+  color: var(--base-200);
+}
+
+.writer-editor__host .cm-search {
+  font-family: var(--md-text-font-family);
+  font-size: 0.66rem;
+}
+
+.md-typeset .writer-editor__host .cm-search input,
+.md-typeset .writer-editor__host .cm-search button {
+  border: 1px solid var(--base-700);
+  border-radius: 5px;
+  background: var(--base-950);
+  color: var(--base-100);
+  font: inherit;
+}
+
+.writer-editor__host .cm-snippetField {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 3px;
+}
+
+.writer-editor__host .cm-foldPlaceholder {
+  border: 0;
+  background: var(--base-800);
+  color: var(--base-300);
+}
+
+/* The welcome card over an empty page. */
+.writer-welcome {
+  position: absolute;
+  inset: 2.2rem 0 0;
+  z-index: 2;
+  padding: 1.2rem;
+  background: color-mix(in srgb, var(--base-950) 92%, transparent);
+  overflow: auto;
+  backdrop-filter: blur(2px);
+}
+
+.writer-welcome[hidden] {
+  display: none;
+}
+
+/* ── The preview ── */
+
+.writer-previewpane {
+  min-width: 0;
+  min-height: 0;
+  padding: 0.8rem 1.4rem 30vh;
+  border-left: 1px solid var(--base-700);
+  overflow: auto;
+  font-size: 0.8rem;
+}
+
+.writer[data-view="preview"] .writer-previewpane {
+  border-left: 0;
+  padding-inline: max(1.4rem, calc((100% - 44rem) / 2));
+}
+
+.writer[data-view="preview"] .writer-pv:not(.writer-pv--text) {
+  cursor: pointer;
+}
+
+.writer[data-view="preview"] .writer-pv:not(.writer-pv--text):hover {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 4px;
+}
+
+/* ── A component's form, over the preview side ── */
+
+.writer-form {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: min(var(--writer-form), 100%);
+  padding: 0.7rem 0.8rem 1rem;
+  border-left: 1px solid var(--base-700);
+  background: var(--base-900);
+  box-shadow: var(--shadow-lg);
+  overflow: auto;
+  animation: writer-form 0.2s var(--ease-out);
+}
+
+.writer-form[hidden] {
+  display: none;
+}
+
+@keyframes writer-form {
+  from {
+    opacity: 0;
+    transform: translateX(calc(12px * var(--motion-scale, 1)));
+  }
+}
+
+.writer[data-view="split"] .writer-form {
+  width: min(max(var(--writer-form), 38%), 100%);
+}
+
+.writer-form__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
+}
+
+.md-typeset .writer-form__foot {
+  margin: 0.8rem 0 0;
+  color: var(--base-500);
+  font-size: 0.6rem;
+}
+
+[data-motion="off"] .writer-form,
+[data-motion="off"] .cm-writer-chip {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .writer-form,
+  .cm-writer-chip {
+    animation: none;
+  }
+}
+
+/* The Add to site dialog. */
+.writer-dialog--publish .writer-panel {
+  padding: 0;
+  overflow: visible;
+}
+
 /* ── Icons ── */
+
 
 .writer-icon {
   display: inline-flex;
@@ -112,19 +1005,6 @@
 }
 
 /* ── Cards: the page settings and each component ── */
-
-.writer__editor {
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-  min-width: 0;
-}
-
-.writer-blocks {
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-}
 
 .writer-card {
   padding: 0.7rem 0.8rem 0.8rem;
@@ -433,13 +1313,6 @@
   align-self: flex-start;
 }
 
-.md-typeset .writer-add-last {
-  width: 100%;
-  justify-content: center;
-  padding: 0.7rem;
-  border-style: dashed;
-}
-
 /* Table editor */
 .writer-table {
   display: grid;
@@ -618,81 +1491,6 @@
   font-size: 0.64rem;
 }
 
-/* ── Output side: tabs and panels ── */
-
-.writer__side {
-  position: sticky;
-  top: 3.4rem;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  max-height: calc(100vh - 4.4rem);
-  border: 1px solid var(--base-700);
-  border-radius: 10px;
-  background: var(--base-900);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-
-@media screen and (max-width: 76.1875em) {
-  .writer__side {
-    position: static;
-    max-height: none;
-  }
-}
-
-.writer-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.2rem;
-  padding: 0.35rem;
-  border-bottom: 1px solid var(--base-700);
-  background: var(--base-950);
-}
-
-.writer-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.6rem;
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  color: var(--base-400);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.writer-tab:hover {
-  color: var(--base-100);
-}
-
-.writer-tab[aria-selected="true"] {
-  background: var(--base-900);
-  color: var(--base-100);
-  box-shadow: var(--shadow-sm), inset 0 -2px 0 var(--accent);
-}
-
-.writer-tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.writer-tab__count {
-  min-width: 1.1rem;
-  padding: 0 0.3rem;
-  border-radius: 999px;
-  background: var(--writer-warn);
-  color: #fff;
-  font-size: 0.6rem;
-  line-height: 1.1rem;
-  text-align: center;
-}
-
-.writer-tab__count[hidden] {
-  display: none;
-}
 
 .writer-panel {
   flex: 1;
@@ -815,18 +1613,6 @@
 .writer .tabbed-set > input:nth-child(7):checked ~ .tabbed-labels > :nth-child(7),
 .writer .tabbed-set > input:nth-child(8):checked ~ .tabbed-labels > :nth-child(8) {
   box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-/* Markdown source */
-.md-typeset .writer-source {
-  margin: 0;
-}
-
-.md-typeset .writer-source code {
-  max-height: none;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.66rem;
 }
 
 /* Checks */
@@ -1105,4 +1891,13 @@
 [data-motion="off"] .writer-dialog[open],
 [data-motion="off"] .writer-toast {
   animation: none;
+}
+
+/* Material indents lists; the checks in the sidebar sit flush. */
+.md-typeset .writer-side ul.writer-checks {
+  margin: 0;
+}
+
+.md-typeset .writer-side .writer-panel__lead {
+  margin-top: 0.4rem;
 }

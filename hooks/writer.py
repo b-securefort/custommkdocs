@@ -65,6 +65,8 @@ UI_ICONS = [
     "table", "sitemap-outline", "view-grid-outline", "gesture-tap-button",
     "timeline-text-outline", "magnify", "eye-outline", "source-pull",
     "paperclip", "folder-zip-outline", "pencil-outline", "file-outline",
+    "puzzle-outline", "file-cog-outline", "view-split-vertical", "text-box-edit-outline",
+    "drag-vertical", "chevron-left", "fullscreen", "fullscreen-exit",
 ]
 
 # Same names and icons as hooks/page_info.py.

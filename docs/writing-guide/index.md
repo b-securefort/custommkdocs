@@ -7,7 +7,7 @@ title: Writing guide
 How to add and edit pages on this site. Copy the examples and change the text.
 
 !!! tip "Rather not write Markdown by hand?"
-    The [page writer](../write.md) builds a page in your browser: pick components by what your reader needs, see the page as it will look, and download it with its images and files as one bundle, which a pipeline turns into a pull request. See [Publish from the page writer](#publish-from-the-page-writer).
+    The [page writer](../write.md) is a Markdown editor in your browser with the site's components to hand: drag one in from the sidebar or type `/`, fill it in as Markdown or in its form, and see the page as it will look beside it. It suggests links, icons and placeholders as you type and underlines what the checks find. Then download the page with its images and files as one bundle, which a pipeline turns into a pull request. See [Publish from the page writer](#publish-from-the-page-writer).
 
 ## Add a page
 
@@ -268,7 +268,7 @@ The [page writer](../write.md) packs a page into a **bundle**: one `.zip` holdin
 If the run fails, its log says why. The usual reasons:
 
 - **A new page whose file name is taken.** To change that page, open it on the page writer (**Open a .md or bundle**) and choose *A change to an existing page* under **Add to site**. Otherwise give the new page another file name.
-- **A broken link or image.** The build names the page and the link. **Checks** on the page writer catches most of these before you download.
+- **A broken link or image.** The build names the page and the link. The page writer underlines most of these as you type, and lists them under **Checks** in its sidebar.
 - **Too big.** A bundle can be up to 25 MB.
 
 To carry on with a page later, or on another computer, open its bundle on the page writer: the page, its images and its files all come back. **Add to site** also has a *Do it by hand* tab, for adding the files to the repository yourself with git.

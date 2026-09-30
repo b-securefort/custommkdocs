@@ -1,17 +1,20 @@
-/* Page writer (docs/write.md): build a page from the site's components in the
- * browser, preview it with the site's own styles, and download it as a bundle:
- * one .zip with the page, its images and files, and a manifest.json saying
- * where each one goes in the repository (tools/ingest_bundle.py reads it).
+/* Page writer (docs/write.md): write a page in Markdown with the site's
+ * components to hand, preview it with the site's own styles, and download it
+ * as a bundle: one .zip with the page, its images and files, and a
+ * manifest.json saying where each one goes in the repository
+ * (tools/ingest_bundle.py reads it).
  *
  * hooks/writer.py puts the site's folders, pages and icons in the page as
  * JSON. Nothing is sent anywhere: the draft is kept in this browser (images
  * and files in IndexedDB) until the writer downloads it, and "Add to site"
  * says what to do with the bundle.
  *
- * A page is a list of blocks. Each block type draws its form, writes its
- * Markdown and previews itself with the HTML the build would produce.
- * Opening a .md file parses it back into blocks; anything the parser doesn't
- * recognise stays as a Text block, word for word, so nothing is lost.
+ * The Markdown is the page. The editor is CodeMirror (vendor/codemirror.min.js,
+ * built by tools/codemirror/), with the components in a sidebar to drag or
+ * click in, and "/" to type one in. The Markdown is read into blocks as it
+ * changes, each knowing where it is in the text: the preview draws them, the
+ * checks point at them, and a component's form edits just its own Markdown
+ * when the writer asks for it (the Edit button on the block, or Ctrl+.).
  *
  * Mounts on Material's document$, like the other scripts. */
 (function () {
@@ -20,12 +23,15 @@
   var SCRIPT = document.currentScript && document.currentScript.src;
   var BASE = SCRIPT ? SCRIPT.replace(/javascripts\/writer\.js(?:[?#].*)?$/, "") : "/";
   var MARKED_SRC = BASE + "javascripts/vendor/marked.min.js";
+  var CM_SRC = BASE + "javascripts/vendor/codemirror.min.js";
   // The build Material itself loads for pages with diagrams.
   var MERMAID_SRC = "https://unpkg.com/mermaid@11/dist/mermaid.min.js";
   var DRAFT_KEY = "docs.writer.draft";
   // Where drafts kept images before IndexedDB: read once, moved, removed.
   var IMAGES_KEY = "docs.writer.images";
-  var PANEL_KEY = "docs.writer.panel";
+  // Markdown, split or preview; and which sidebar panel is open.
+  var VIEW_KEY = "docs.writer.view";
+  var SIDE_KEY = "docs.writer.side";
   // Images and files are too big for localStorage.
   var DB_NAME = "docs.writer";
   var DB_STORE = "assets";
@@ -76,6 +82,12 @@
     { id: "security", label: "Security", hint: "exposure, secrets, identity" },
     { id: "preview", label: "Preview", hint: "not generally available yet" },
   ];
+
+  // Callout types Material styles as well as the site's own: an unknown one
+  // is drawn as a plain note, which is rarely what was meant.
+  var KNOWN_CALLOUTS = CALLOUTS.map(function (k) {
+    return k.id;
+  }).concat(["abstract", "summary", "tldr", "todo", "check", "done", "help", "faq", "caution", "attention", "failure", "fail", "missing", "error", "bug", "quote", "cite", "troubleshoot"]);
 
   // Badge words and colours, from the badges table in Choosing components.
   var BADGES = {
@@ -337,10 +349,10 @@
   /* ── State ── */
 
   var data = null; // from hooks/writer.py
-  // { meta, blocks, images, files }: images and files map a name to a Blob.
+  // { meta, body, images, files }: body is the Markdown under the title;
+  // images and files map a name to a Blob. state.blocks is read from body.
   var state = null;
   var ui = {};
-  var nextId = 1;
 
   function emptyMeta() {
     return {
@@ -356,7 +368,14 @@
       review_every: "",
       extraFront: "",
       mode: "new",
+      // Example text a recipe or component brought in, so the checks can
+      // point out any that's still there.
+      hints: [],
     };
+  }
+
+  function newState(meta, body) {
+    return { meta: meta, body: body || "", blocks: [], images: {}, files: {}, assetsLoaded: true, assetsSaved: true };
   }
 
   function defaultFolder() {
@@ -382,22 +401,54 @@
     return "docs/" + (folder ? folder + "/" : "") + fileName();
   }
 
-  function makeBlock(type, preset) {
-    var block = TYPES[type].create();
-    if (preset) Object.assign(block, copy(preset));
-    block.type = type;
-    block.id = "b" + nextId++;
-    return block;
-  }
-
   function isEmpty(block) {
     return TYPES[block.type].empty(block);
   }
 
   function liveBlocks() {
-    return state.blocks.filter(function (b) {
+    return readBlocks().filter(function (b) {
       return !isEmpty(b);
     });
+  }
+
+  // The body read into blocks, each with from and to: where its Markdown
+  // starts and ends in the body. Read again only when the body changes.
+  var blockCache = { body: null, blocks: [] };
+  function blocksOf(body) {
+    if (blockCache.body === body) return blockCache.blocks;
+    var ls = lines(body);
+    var starts = [];
+    var at = 0;
+    ls.forEach(function (line) {
+      starts.push(at);
+      at += line.length + 1;
+    });
+    var blocks = parseBlocks(body).map(function (b, i) {
+      b.id = "b" + i;
+      b.from = starts[b.start];
+      b.to = starts[b.end - 1] + ls[b.end - 1].length;
+      return b;
+    });
+    blockCache = { body: body, blocks: blocks };
+    return blocks;
+  }
+
+  function readBlocks() {
+    state.blocks = blocksOf(state.body);
+    return state.blocks;
+  }
+
+  function blockById(id) {
+    var blocks = readBlocks();
+    for (var i = 0; i < blocks.length; i++) if (blocks[i].id === id) return blocks[i];
+    return null;
+  }
+
+  // The block the position is in, or null between blocks.
+  function blockAt(pos, blocks) {
+    blocks = blocks || readBlocks();
+    for (var i = 0; i < blocks.length; i++) if (pos >= blocks[i].from && pos <= blocks[i].to) return blocks[i];
+    return null;
   }
 
   // Calls fn on every string in the blocks; fn returns the replacement.
@@ -1325,90 +1376,253 @@
     { need: "See what changed over time", type: "timeline", name: "Timeline", rather: "a numbered list" },
   ];
 
+  /* ── The Markdown a component starts as ──
+     Snippets for CodeMirror: ${text} is a field the writer tabs through and
+     can keep; #{text} is example text to replace, which the checks point out
+     while it's still there. */
+
+  var CALLOUT_SAMPLES = {
+    note: "Worth knowing",
+    info: "Where this applies",
+    tip: "A faster way",
+    success: "You should now see the new resource",
+    warning: "Back up the database first",
+    danger: "This deletes the data for good",
+    example: "An example",
+    question: "A common question",
+    permissions: "You need Contributor on the resource group",
+    cost: "This creates billable resources",
+    security: "Keep the key out of source control",
+    preview: "This feature is in preview",
+  };
+
+  var TROUBLESHOOT_SNIPPET = [
+    '??? troubleshoot "`#{ErrorCode}` when #{doing something}"',
+    "",
+    "    Cause",
+    "    :   #{Why it happens.}",
+    "",
+    "    Fix",
+    "    :   #{What to do, with the command or click path.}",
+  ].join("\n");
+
+  // image: the path to an image the writer just uploaded, if any.
+  function snippetFor(need, image) {
+    var p = need.preset || {};
+    switch (need.type) {
+      case "heading":
+        return "## #{Name the section}";
+      case "text":
+        return "#{Write here.}";
+      case "steps":
+        return ['<div class="steps" markdown>', "", "1.  **#{Do the first thing.}** #{How to do it, with any command or click path.}", "", "2.  **#{Do the next thing.}**", "", "</div>"].join("\n");
+      case "callout":
+        var marker = p.collapse === "closed" ? "???" : p.collapse === "open" ? "???+" : "!!!";
+        var kind = p.kind || "note";
+        return marker + " " + kind + ' "#{' + (CALLOUT_SAMPLES[kind] || "Make the point") + '}"\n    #{What the reader needs to know.}';
+      case "troubleshoot":
+        return TROUBLESHOOT_SNIPPET;
+      case "tabs":
+        return ['=== "Portal"', "", "    #{What readers who use the portal do.}", "", '=== "Azure CLI"', "", "    ``` bash", "    ${az group create --name <resource-group> --location <location>}", "    ```"].join("\n");
+      case "code":
+        return "``` ${bash}\n${az group create --name <resource-group> --location <location>}\n```";
+      case "output":
+        return "``` { .text .output }\n#{What the command prints: only the lines that prove it worked}\n```";
+      case "values":
+        return ['<div class="your-values" markdown>', "", "- `<${resource-group}>` ${Resource group name}", "", "</div>"].join("\n");
+      case "table":
+        return ["| ${Setting} | What it does | Default |", "| ------- | ------------ | ------- |", "| ${} | | |", "| | | |"].join("\n");
+      case "image":
+        return ['<figure class="screenshot" markdown="span">', "  ![#{Describe what the image shows}](" + (image || "${../images/your-screenshot.png}") + ")", "  <figcaption>#{What to notice}</figcaption>", "</figure>"].join("\n");
+      case "diagram":
+        return "``` mermaid\nflowchart LR\n  ${user[Reader]} --> ${site[Docs site]}\n```";
+      case "cards":
+        return [
+          '<div class="grid cards" markdown>',
+          "",
+          "-   :material-rocket-launch-outline:{ .lg .middle } __[#{Get started}](${})__",
+          "",
+          "    ---",
+          "",
+          "    #{A sentence or two on what's there.}",
+          "",
+          "-   :material-book-open-variant:{ .lg .middle } __[#{Guides}](${})__",
+          "",
+          "    ---",
+          "",
+          "    #{What the reader finds there.}",
+          "",
+          "</div>",
+        ].join("\n");
+      case "buttons":
+        return "[#{Get started}](${}){ .md-button .md-button--primary }";
+      case "timeline":
+        return ['<div class="timeline" markdown>', "", "#{v2.0} { .green }", ":   #{**Released.** What changed.}", "", "#{v1.0} { .grey }", ":   #{First release.}", "", "</div>"].join("\n");
+    }
+    return "";
+  }
+
+  // The example text in a snippet.
+  function snippetHints(template) {
+    var out = [];
+    template.replace(/#\{([^{}]*)\}/g, function (all, text) {
+      if (text.trim() && out.indexOf(text) < 0) out.push(text);
+      return all;
+    });
+    return out;
+  }
+
+  // The snippet as it reads once inserted, for a plain textarea or a drag.
+  function snippetText(template) {
+    return template.replace(/[#$]\{([^{}]*)\}/g, "$1");
+  }
+
   /* ── Page recipes (from the Page recipes in Choosing components) ── */
 
   var RECIPES = [
     {
       name: "How-to",
       text: "Steps to get one task done.",
-      blocks: [
-        ["text", { hint: "One sentence saying what the reader will have at the end." }],
-        ["heading", { text: "Before you start" }],
-        ["text", { hint: "Prerequisites as a checklist:\n- [ ] An account with access to …\n- [ ] The tools installed: …" }],
-        ["heading", { hint: "Name the procedure, such as: Create the storage account" }],
-        ["steps", { items: [{ action: "", body: "" }, { action: "", body: "" }, { action: "", body: "" }] }],
-        ["callout", { kind: "success", hint: "What they should see now" }],
-        ["heading", { text: "Troubleshooting" }],
-        ["troubleshoot", {}],
-        ["buttons", { items: [{ text: "", link: "", style: "primary" }] }],
+      md: [
+        "#{One sentence saying what the reader will have at the end.}",
+        "",
+        "## Before you start",
+        "",
+        "- [ ] #{An account with access to …}",
+        "- [ ] #{The tools installed: …}",
+        "",
+        "## #{Name the procedure, such as: Create the storage account}",
+        "",
+        '<div class="steps" markdown>',
+        "",
+        "1.  **#{Do the first thing.}** #{How to do it.}",
+        "",
+        "2.  **#{Do the next thing.}**",
+        "",
+        "3.  **#{Do the last thing.}**",
+        "",
+        "</div>",
+        "",
+        '!!! success "#{What they should see now}"',
+        "",
+        "## Troubleshooting",
+        "",
+        TROUBLESHOOT_SNIPPET,
+        "",
+        "[#{The next thing to do}](${}){ .md-button .md-button--primary }",
       ],
     },
     {
       name: "Cloud how-to",
       text: "A task in Azure or AWS, with permissions, your values and portal / CLI tabs.",
       meta: { applies_to: ["azure"] },
-      blocks: [
-        ["text", { hint: "One sentence saying what the reader will have at the end." }],
-        ["callout", { kind: "permissions", hint: "You need Contributor on the resource group" }],
-        ["values", { items: [{ name: "subscription-id", label: "Azure subscription ID" }, { name: "resource-group", label: "Resource group name" }, { name: "location", label: "Azure region, such as `westeurope`" }] }],
-        ["heading", { hint: "Name the procedure, such as: Create the resource group" }],
-        [
-          "tabs",
-          {
-            tabs: [
-              { label: "Portal", body: "", hint: "1. Go to **Home > Resource groups > Create**{ .ui-path }.\n2. …" },
-              { label: "Azure CLI", body: "", hint: "``` bash\naz group create --name <resource-group> --location <location>\n```" },
-            ],
-          },
-        ],
-        ["output", {}],
-        ["heading", { text: "Troubleshooting" }],
-        ["troubleshoot", {}],
+      md: [
+        "#{One sentence saying what the reader will have at the end.}",
+        "",
+        '!!! permissions "#{You need Contributor on the resource group}"',
+        "",
+        '<div class="your-values" markdown>',
+        "",
+        "- `<subscription-id>` Azure subscription ID",
+        "- `<resource-group>` Resource group name",
+        "- `<location>` Azure region, such as `westeurope`",
+        "",
+        "</div>",
+        "",
+        "## #{Name the procedure, such as: Create the resource group}",
+        "",
+        '=== "Portal"',
+        "",
+        "    1. Go to **Home > Resource groups > Create**{ .ui-path }.",
+        "    2. #{Fill in the form …}",
+        "",
+        '=== "Azure CLI"',
+        "",
+        "    ``` bash",
+        "    az group create --name <resource-group> --location <location>",
+        "    ```",
+        "",
+        "``` { .text .output }",
+        "#{What the command prints}",
+        "```",
+        "",
+        "## Troubleshooting",
+        "",
+        TROUBLESHOOT_SNIPPET,
       ],
     },
     {
       name: "Reference",
       text: "Settings or commands people look up.",
-      blocks: [
-        ["text", { hint: "One sentence on what's listed here." }],
-        ["heading", { hint: "A group of settings" }],
-        ["table", { rows: [["Setting", "What it does", "Default"], ["", "", ""], ["", "", ""]] }],
-        ["code", {}],
+      md: [
+        "#{One sentence on what's listed here.}",
+        "",
+        "## #{A group of settings}",
+        "",
+        "| Setting | What it does | Default |",
+        "| ------- | ------------ | ------- |",
+        "| ${}     |              |         |",
+        "|         |              |         |",
+        "",
+        "``` ${yaml}",
+        "#{An example that uses them}",
+        "```",
       ],
     },
     {
       name: "Section landing",
       text: "The first page of a tab: what's in it and where to go.",
-      blocks: [
-        ["text", { hint: "Two sentences on what this section covers." }],
-        ["cards", {}],
-      ],
+      md: ["#{Two sentences on what this section covers.}", "", snippetFor({ type: "cards" })],
     },
     {
       name: "Troubleshooting",
       text: "A page of errors, each with its cause and fix.",
-      blocks: [
-        ["text", { hint: "One sentence on what this page helps with." }],
-        ["heading", { hint: "A group, such as: Sign-in" }],
-        ["troubleshoot", {}],
-        ["troubleshoot", {}],
+      md: [
+        "#{One sentence on what this page helps with.}",
+        "",
+        "## #{A group, such as: Sign-in}",
+        "",
+        TROUBLESHOOT_SNIPPET,
+        "",
+        '??? troubleshoot "`#{AnotherError}` when #{doing something else}"',
+        "",
+        "    Cause",
+        "    :   #{Why that happens.}",
+        "",
+        "    Fix",
+        "    :   #{What to do about it.}",
       ],
     },
     {
       name: "Release notes",
       text: "What changed, release by release.",
-      blocks: [
-        ["text", { hint: "One sentence on what these notes cover." }],
-        ["timeline", { items: [{ label: "", colour: "green", text: "" }, { label: "", colour: "accent", text: "" }, { label: "", colour: "grey", text: "" }] }],
-        ["heading", { badge: "new", hint: "v2.0" }],
-        ["text", { hint: "What's new in this release." }],
-        ["callout", { kind: "danger", hint: "Breaking: what changed and what to do" }],
+      md: [
+        "#{One sentence on what these notes cover.}",
+        "",
+        '<div class="timeline" markdown>',
+        "",
+        "#{v2.0} { .green }",
+        ":   #{**Released.** What's new.}",
+        "",
+        "#{v1.1} { .accent }",
+        ":   #{What changed.}",
+        "",
+        "#{v1.0} { .grey }",
+        ":   #{First release.}",
+        "",
+        "</div>",
+        "",
+        '## #{Version 2.0} <span class="badge badge--accent">New</span> { data-toc-label="#{Version 2.0}" }',
+        "",
+        "#{What's new in this release.}",
+        "",
+        '!!! danger "#{Breaking: what changed and what to do}"',
       ],
     },
     {
       name: "Blank page",
       text: "Start from nothing.",
-      blocks: [["text", {}]],
+      md: [],
     },
   ];
 
@@ -1427,18 +1641,29 @@
     badge: /^(.*?)\s+<span class="badge(?: badge--[\w-]+)*">([^<]+)<\/span>(?:\s*\{[^}]*\})?$/,
   };
 
+  // Each block says which lines it came from: start, and end (exclusive).
   function parseBlocks(text) {
     var ls = lines(text);
     var out = [];
     var buf = [];
+    var bufStart = 0;
     var i = 0;
     function flush() {
-      var t = trimBlank(buf);
-      if (t.length) out.push({ type: "text", md: t.join("\n") });
+      var a = 0;
+      var b = buf.length;
+      while (a < b && !buf[a].trim()) a++;
+      while (b > a && !buf[b - 1].trim()) b--;
+      if (a < b) out.push({ type: "text", md: buf.slice(a, b).join("\n"), start: bufStart + a, end: bufStart + b });
       buf = [];
+    }
+    function keep(from, to) {
+      if (!buf.length) bufStart = from;
+      buf = buf.concat(ls.slice(from, to));
     }
     function take(block, next) {
       flush();
+      block.start = i;
+      block.end = next;
       out.push(block);
       i = next;
     }
@@ -1473,7 +1698,7 @@
         if (block) take(block, r.next);
         else {
           // Keep a component the writer can't edit exactly as it was.
-          buf = buf.concat(ls.slice(i, r.next));
+          keep(i, r.next);
           i = r.next;
         }
         continue;
@@ -1495,7 +1720,7 @@
         take(r.block, r.next);
         continue;
       }
-      buf.push(line);
+      keep(i, i + 1);
       i++;
     }
     flush();
@@ -1870,7 +2095,7 @@
         meta.titleInFront = true;
       }
     }
-    return { meta: meta, blocks: parseBlocks(body.join("\n")) };
+    return { meta: meta, body: trimBlank(body).join("\n") };
   }
 
   /* ── Writing Markdown ── */
@@ -1892,12 +2117,12 @@
     return out.length ? "---\n" + out.join("\n") + "\n---\n\n" : "";
   }
 
+  // The file: front matter, the title and the body as written.
   function toMarkdown() {
     var parts = [];
     if (state.meta.title.trim() && !state.meta.titleInFront) parts.push("# " + state.meta.title.trim());
-    liveBlocks().forEach(function (b) {
-      parts.push(TYPES[b.type].md(b));
-    });
+    var body = trimBlank(lines(state.body)).join("\n");
+    if (body) parts.push(body);
     return frontMatter() + parts.join("\n\n") + "\n";
   }
 
@@ -2234,8 +2459,14 @@
     area.style.height = area.scrollHeight + 2 + "px";
   }
 
-  // Through execCommand, so the browser's undo still works.
+  // Through execCommand, so the browser's undo still works. area is a
+  // textarea, or the editor as one (editorArea()).
   function replaceSelection(area, text) {
+    if (area.cm) {
+      area.cm.dispatch(area.cm.state.replaceSelection(text));
+      area.cm.focus();
+      return;
+    }
     area.focus();
     var ok = false;
     try {
@@ -2646,19 +2877,15 @@
     var touched = rewriteRefs(folderPath(), folderPath(), function (target) {
       return moves[target] || null;
     });
-    if (kind === "images") {
-      state.blocks.forEach(function (b) {
-        if (b.type !== "image" || b.image !== from) return;
-        b.image = to;
-        if (touched.indexOf(b) < 0) touched.push(b);
-      });
+    if (ui.form && ui.form.block.type === "image" && ui.form.block.image === from) {
+      ui.form.block.image = to;
+      drawForm();
     }
-    touched.forEach(redrawBlock);
     unstoreAsset(kind, from);
     storeAsset(kind, to, blob);
     drawAssets(true);
     changed();
-    toast("Renamed to " + to + (touched.length ? ", and the page points to the new name." : "."));
+    toast("Renamed to " + to + (touched ? ", and the page points to the new name." : "."));
   }
 
   function openRename(kind, name) {
@@ -2694,9 +2921,7 @@
   }
 
   function redrawImageBlocks() {
-    state.blocks.forEach(function (b) {
-      if (b.type === "image" && b.image) redrawBlock(b);
-    });
+    if (ui.form && ui.form.block.type === "image") drawForm();
   }
 
   // Object URLs for the preview, made once per image or file.
@@ -2745,33 +2970,26 @@
     return Object.keys(state.images).length + Object.keys(state.files).length > 0;
   }
 
-  // Rewrites the relative links and image paths in every block. move gets
+  // Rewrites the relative links and image paths in the Markdown. move gets
   // each one's path from docs/ and returns where it points now, or null to
-  // leave it. Returns the blocks that changed.
+  // leave it. Returns how many changed.
   function rewriteRefs(fromFolder, toFolder, move) {
-    function fix(href) {
-      if (!href || isExternal(href)) return href;
+    var changes = [];
+    var re = /(\]\(\s*)([^)\s]+)|(\b(?:src|href)=")([^"]+)/g;
+    var m;
+    while ((m = re.exec(state.body))) {
+      var href = m[2] || m[4];
+      if (!href || isExternal(href)) continue;
       var parts = splitHash(href);
       var dest = move(joinPath(fromFolder, parts[0]));
-      return dest ? relPath(toFolder, dest) + parts[1] : href;
+      if (!dest) continue;
+      var next = relPath(toFolder, dest) + parts[1];
+      if (next === href) continue;
+      var from = m.index + (m[1] || m[3]).length;
+      changes.push({ from: from, to: from + href.length, insert: next });
     }
-    var touched = [];
-    state.blocks.forEach(function (b) {
-      var before = JSON.stringify(b);
-      walk(b, function (value, key) {
-        if (key === "hint") return value;
-        if (key === "link" || key === "src") return fix(value);
-        return value
-          .replace(/(\]\(\s*)([^)\s]+)/g, function (all, open, href) {
-            return open + fix(href);
-          })
-          .replace(/(\b(?:src|href)=")([^"]+)/g, function (all, open, href) {
-            return open + fix(href);
-          });
-      });
-      if (JSON.stringify(b) !== before) touched.push(b);
-    });
-    return touched;
+    if (changes.length) editBody(changes);
+    return changes.length;
   }
 
   // Links are written relative to the page, and point into the page's own
@@ -2799,7 +3017,7 @@
     });
     rewriteRefs(from.folder, to.folder, function (target) {
       return moves[target] || null;
-    }).forEach(redrawBlock);
+    });
   }
 
   /* ── Keeping images and files in this browser (IndexedDB) ── */
@@ -3260,9 +3478,7 @@
         state.meta.bundle = { name: name, sig: signature() };
         save();
         render();
-        toast("Downloaded " + name + ". Add to site says what to do with it.", ui.panel === "publish" ? null : "Add to site", function () {
-          showPanel("publish");
-        });
+        toast("Downloaded " + name + ". Add to site says what to do with it.", ui.publishBox ? null : "Add to site", openPublish);
       },
       function (e) {
         toast("Couldn't make the bundle (" + String((e && e.message) || e) + "). Download the .md and each image and file from Add to site instead.");
@@ -3301,18 +3517,8 @@
         if (hasContent() && !window.confirm("Replace the page you're writing with the one in " + file.name + "? Download it first if you want to keep it.")) return;
         var target = /^docs\/(?:(.+)\/)?([^/]+)\.md$/.exec(manifest.page.target);
         var doc = parseDocument(fromUtf8(entries[manifest.page.src]));
-        nextId = 1;
-        state = {
-          meta: doc.meta,
-          blocks: doc.blocks.map(function (b) {
-            b.id = "b" + nextId++;
-            return b;
-          }),
-          images: {},
-          files: {},
-          assetsLoaded: true,
-          assetsSaved: true,
-        };
+        closeForm();
+        state = newState(doc.meta, doc.body);
         state.meta.mode = manifest.mode === "update" ? "update" : "new";
         placePage(target[1] || "", target[2]);
         var dirs = [];
@@ -3327,21 +3533,10 @@
         // Where the page's links were written from; syncPaths() moves them
         // if the bundle was made for another folder.
         state.meta.at = { folder: folderPath(), assets: dirs[0] || assetDir() };
+        loadPage();
         syncPaths();
-        // An image block pointing at one of the bundle's images is that
-        // uploaded image again, with its thumbnail and Replace button.
-        state.blocks.forEach(function (b) {
-          var found = b.type === "image" && b.src && attachedAt(joinPath(folderPath(), b.src.trim()));
-          if (found && found.kind === "images") {
-            b.image = found.name;
-            b.src = "";
-          }
-        });
         state.meta.bundle = { name: file.name, sig: signature() };
         storeAllAssets();
-        drawSetup();
-        drawAssets(true);
-        drawBlocks();
         changed();
         var skipped = (manifest.assets || []).length - assets.length;
         var images = Object.keys(state.images).length;
@@ -3372,7 +3567,7 @@
 
   function codeTexts() {
     var out = [];
-    state.blocks.forEach(function (b) {
+    readBlocks().forEach(function (b) {
       if (isEmpty(b)) return;
       if (b.type === "code" || b.type === "output") out.push({ id: b.id, text: b.code });
       else if (b.type !== "values") {
@@ -3434,13 +3629,29 @@
   function runChecks() {
     var out = [];
     var m = state.meta;
-    function add(level, text, id) {
-      out.push({ level: level, text: text, id: id });
+    // at: where in the block, as text or a pattern to find in its Markdown;
+    // or { from, to } in the body. Without it, the block's first line.
+    function add(level, text, id, at, group) {
+      out.push({ level: level, text: text, id: id, at: at, group: group });
     }
     if (!m.title.trim()) add("warn", "Give the page a title.");
-    var empties = state.blocks.filter(isEmpty);
-    if (empties.length) add("info", plural(empties.length, "empty component") + " will be left out of the file.", empties[0].id);
     var live = liveBlocks();
+
+    // Example text from a recipe or a component, still as it came.
+    var body = state.body;
+    (m.hints || []).forEach(function (hint) {
+      var i = -1;
+      var n = 0;
+      while ((i = body.indexOf(hint, i + 1)) >= 0 && n++ < 20) {
+        var b = blockAt(i);
+        add("warn", "“" + hint + "” is example text. Replace it with your own, or delete it.", b && b.id, { from: i, to: i + hint.length }, "hints");
+      }
+    });
+
+    live.forEach(function (b) {
+      if (b.type !== "callout" || KNOWN_CALLOUTS.indexOf(b.kind) >= 0) return;
+      add("warn", "“" + b.kind + "” isn't a callout type this site styles. Use one of: " + CALLOUTS.map(function (k) { return k.id; }).join(", ") + ".", b.id, new RegExp("\\s" + b.kind + "\\b"));
+    });
 
     live.forEach(function (b, i) {
       if (i && b.type === "callout" && live[i - 1].type === "callout") add("warn", "Two callouts in a row. Space them out or merge them: when everything is a callout, nothing stands out.", b.id);
@@ -3501,15 +3712,15 @@
       var firstCode = codeTexts().filter(function (entry) {
         return /<[a-z0-9]/i.test(entry.text);
       })[0];
-      var codeIndex = firstCode ? state.blocks.map(function (b) { return b.id; }).indexOf(firstCode.id) : -1;
-      if (codeIndex >= 0 && state.blocks.indexOf(values[0]) > codeIndex) add("warn", "Move the Your values box above the first command.", values[0].id);
+      var codeIndex = firstCode ? readBlocks().map(function (b) { return b.id; }).indexOf(firstCode.id) : -1;
+      if (codeIndex >= 0 && readBlocks().indexOf(values[0]) > codeIndex) add("warn", "Move the Your values box above the first command.", values[0].id);
     }
 
     live.forEach(function (b) {
       if (b.type !== "tabs") return;
       b.tabs.forEach(function (t) {
         var standard = TAB_ALIASES[t.label.trim().toLowerCase()];
-        if (standard && standard !== t.label.trim()) add("info", "Label the tab “" + standard + "” rather than “" + t.label.trim() + "”, so a reader's choice carries across pages.", b.id);
+        if (standard && standard !== t.label.trim()) add("info", "Label the tab “" + standard + "” rather than “" + t.label.trim() + "”, so a reader's choice carries across pages.", b.id, '"' + t.label + '"');
       });
     });
 
@@ -3521,7 +3732,7 @@
     });
 
     live.forEach(function (b) {
-      if (b.type === "image" && !b.alt.trim()) add("warn", "Add alt text to the image: what it shows, for readers who can't see it.", b.id);
+      if (b.type === "image" && !b.alt.trim()) add("warn", "Add alt text to the image: what it shows, for readers who can't see it.", b.id, "![]");
       if (b.type === "code" && !b.lang.trim()) add("info", "Name the code block's language so it's coloured.", b.id);
       if (b.type === "steps" && b.items.filter(stepFilled).length === 1) add("info", "A single step reads better as a paragraph.", b.id);
       if (b.type === "cards") {
@@ -3531,8 +3742,8 @@
       }
       walk(copy(b), function (value, key) {
         if (key === "hint") return value;
-        if (/!\[(|Describe what the image shows)\]\(/.test(value)) add("warn", "An image has no alt text. Replace “Describe what the image shows”.", b.id);
-        else if (/<img\b(?![^>]*\balt=)[^>]*>/i.test(value)) add("warn", "An <img> has no alt text. Add alt=\"…\" saying what it shows.", b.id);
+        if (b.type !== "image" && /!\[(|Describe what the image shows)\]\(/.test(value)) add("warn", "An image has no alt text. Replace “Describe what the image shows”.", b.id, /!\[(|Describe what the image shows)\]\(/);
+        else if (/<img\b(?![^>]*\balt=)[^>]*>/i.test(value)) add("warn", "An <img> has no alt text. Add alt=\"…\" saying what it shows.", b.id, /<img\b(?![^>]*\balt=)[^>]*>/i);
         return value;
       });
     });
@@ -3543,13 +3754,13 @@
         return !mentions(md, assetPath(kind, assetDir(), name));
       });
       if (!unused.length) return;
-      if (kind === "files") add("warn", "Nothing links to " + unused.join(", ") + ", so readers can't download it and it's left out of the bundle. Link to it, or remove it under Images and files.");
+      if (kind === "files") add("warn", "Nothing links to " + unused.join(", ") + ", so readers can't download it and it's left out of the bundle. Link to it, or remove it under Images and files in the sidebar.");
       else add("info", "Not shown on the page, so left out of the bundle: " + unused.join(", ") + ".");
     });
     live.forEach(function (b) {
       missingRefs(b).forEach(function (ref) {
-        if (ref.kind === "files") add("warn", "Links to " + ref.href + ", which isn't attached or on the site. Attach it (the paperclip), or fix the link.", b.id);
-        else add("warn", "Shows " + ref.href + ", which isn't uploaded or on the site. Upload it again, or fix the path.", b.id);
+        if (ref.kind === "files") add("warn", "Links to " + ref.href + ", which isn't attached or on the site. Attach it (Images and files, in the sidebar), or fix the link.", b.id, ref.href);
+        else add("warn", "Shows " + ref.href + ", which isn't uploaded or on the site. Upload it again, or fix the path.", b.id, ref.href);
       });
     });
     var size = bundleSize(md);
@@ -3564,13 +3775,28 @@
     var cloudy = codeTexts().some(function (entry) {
       return /(^|\n|`)\s*(az|aws|kubectl|terraform|Connect-AzAccount|New-Az\w+)\s/.test(entry.text);
     });
-    if (cloudy && !m.applies_to.length) add("info", "This page runs cloud commands. Under Page details, set which platforms it applies to.");
-    if (m.applies_to.length && (!m.owner.trim() || !m.last_reviewed)) add("info", "Cloud pages name an owner and a last reviewed date (Page details), so readers know how far to trust them.");
+    if (cloudy && !m.applies_to.length) add("info", "This page runs cloud commands. Under Page settings, set which platforms it applies to.");
+    if (m.applies_to.length && (!m.owner.trim() || !m.last_reviewed)) add("info", "Cloud pages name an owner and a last reviewed date (Page settings), so readers know how far to trust them.");
     if (m.visibility === "draft") add("info", "Draft: this page won't be published anywhere until you change Visibility.");
     return out;
   }
 
-  /* ── Drawing the writer ── */
+  /* ── Drawing the writer ──
+     A bar across the top, the title under it, then the work area: a rail of
+     sidebar panels, the Markdown, the preview, and the component form when
+     it's asked for. */
+
+  var VIEWS = [
+    ["markdown", "Markdown", "code-tags"],
+    ["split", "Side by side", "view-split-vertical"],
+    ["preview", "Preview", "eye-outline"],
+  ];
+  var SIDES = [
+    ["components", "Components", "puzzle-outline"],
+    ["page", "Page settings", "file-cog-outline"],
+    ["assets", "Images and files", "paperclip"],
+    ["checks", "Checks", "check-circle-outline"],
+  ];
 
   function mount(root) {
     var source = document.getElementById("writer-data");
@@ -3583,7 +3809,11 @@
     root.innerHTML = "";
     ui = { root: root };
     if (!state) {
-      state = loadDraft() || { meta: emptyMeta(), blocks: [], images: {}, files: {}, assetsSaved: true };
+      state = loadDraft();
+      if (!state) {
+        state = newState(emptyMeta(), "");
+        state.assetsLoaded = false;
+      }
       loadAssets();
     }
 
@@ -3598,77 +3828,241 @@
       },
     });
     ui.status = h("span", { class: "writer-status", role: "status" });
+    ui.viewButtons = {};
+    var views = h(
+      "div",
+      { class: "writer-views", role: "group", "aria-label": "Show" },
+      VIEWS.map(function (v) {
+        var btn = h("button", { type: "button", class: "writer-view writer-view--" + v[0], title: v[1], "aria-pressed": "false", onclick: function () { setView(v[0]); } }, [icon(v[2]), h("span", { text: v[1] })]);
+        ui.viewButtons[v[0]] = btn;
+        return btn;
+      })
+    );
+    ui.focusButton = iconButton("fullscreen", "Focus: fill the window with the writer (Esc leaves)", false, function () {
+      setFocus(!root.classList.contains("writer--focus"));
+    });
     ui.bar = h("div", { class: "writer__bar" }, [
-      button("New page", "file-document-plus-outline", "md-button--ghost md-button--sm", function () {
-        openRecipes();
-      }),
+      button("New page", "file-document-plus-outline", "md-button--ghost md-button--sm", openRecipes),
       button("Open a .md or bundle", "file-upload-outline", "md-button--ghost md-button--sm", function () {
         fileInput.click();
       }),
       fileInput,
       ui.status,
-      button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm writer__download", downloadBundle),
+      views,
+      h("span", { class: "writer__actions" }, [
+        iconButton("content-copy", "Copy the page's Markdown file, with its front matter and title", false, function () {
+          copyText(toMarkdown(), "Markdown copied: the whole file, front matter and title included.");
+        }),
+        iconButton("download", "Download the .md on its own", false, download),
+        ui.focusButton,
+        button("Add to site", "source-pull", "md-button--ghost md-button--sm", openPublish),
+        button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm", downloadBundle),
+      ]),
     ]);
 
-    ui.setup = h("section", { class: "writer-card writer-setup", "aria-label": "Page" });
-    ui.assets = h("section", { class: "writer-card writer-assets", "aria-label": "Images and files" });
-    ui.blocks = h("div", { class: "writer-blocks" });
-    ui.addLast = button("Add a component", "plus", "writer-add-last", function () {
-      openInsert(state.blocks.length);
+    ui.title = h("input", {
+      class: "writer-title__input",
+      value: state.meta.title,
+      placeholder: "Page title, such as: Create a resource group",
+      "aria-label": "Page title",
+      oninput: function () {
+        var m = state.meta;
+        m.title = ui.title.value;
+        if (!m.slugEdited) m.slug = "";
+        updateTitleBar();
+        if (ui.side === "page") drawSetup();
+        changed();
+      },
+      onkeydown: function (event) {
+        if ((event.key === "Enter" || (event.key === "Tab" && !event.shiftKey) || event.key === "ArrowDown") && ui.cm) {
+          event.preventDefault();
+          ui.cm.focus();
+        }
+      },
     });
-    ui.editor = h("div", { class: "writer__editor" }, [ui.setup, ui.assets, ui.blocks, ui.addLast]);
+    ui.path = h("button", {
+      type: "button",
+      class: "writer-title__path",
+      title: "Where the page goes, and the rest of its settings",
+      onclick: function () {
+        openSide("page");
+      },
+    });
+    ui.titleBar = h("div", { class: "writer-title" }, [h("span", { class: "writer-title__hash", "aria-hidden": "true", text: "#" }), ui.title, ui.path]);
 
-    ui.panels = {};
-    ui.tabButtons = {};
-    var tabbar = h("div", { class: "writer-tabs", role: "tablist", "aria-label": "Output" });
-    [["preview", "Preview", "eye-outline"], ["markdown", "Markdown", "code-tags"], ["checks", "Checks", "check-circle-outline"], ["publish", "Add to site", "source-pull"]].forEach(function (p) {
-      var tab = h("button", { type: "button", role: "tab", class: "writer-tab", id: "writer-tab-" + p[0], "aria-controls": "writer-panel-" + p[0], onclick: function () { showPanel(p[0]); } }, [icon(p[2]), h("span", { text: p[1] })]);
-      if (p[0] === "checks") {
-        ui.checkCount = h("span", { class: "writer-tab__count" });
-        tab.appendChild(ui.checkCount);
+    // The sidebar: a rail of buttons, and the panel the open one shows.
+    ui.railButtons = {};
+    ui.sides = {};
+    ui.rail = h("nav", { class: "writer-rail", "aria-label": "Writer panels" });
+    SIDES.forEach(function (s) {
+      var btn = h("button", { type: "button", class: "writer-rail__btn", title: s[1], "aria-label": s[1], "aria-pressed": "false", onclick: function () { openSide(ui.side === s[0] ? "" : s[0]); } }, [icon(s[2])]);
+      if (s[0] === "checks") {
+        ui.checkCount = h("span", { class: "writer-rail__count", hidden: true });
+        btn.appendChild(ui.checkCount);
       }
-      ui.tabButtons[p[0]] = tab;
-      tabbar.appendChild(tab);
-      ui.panels[p[0]] = h("div", { class: "writer-panel writer-panel--" + p[0], role: "tabpanel", id: "writer-panel-" + p[0], "aria-labelledby": "writer-tab-" + p[0], hidden: true });
+      ui.railButtons[s[0]] = btn;
+      ui.rail.appendChild(btn);
+      ui.sides[s[0]] = h("div", { class: "writer-side__panel writer-side__panel--" + s[0], hidden: true });
     });
+    ui.sideTitle = h("span", { class: "writer-side__title" });
+    ui.sidebar = h("aside", { class: "writer-side", "aria-label": "Sidebar" }, [
+      h("div", { class: "writer-side__head" }, [
+        ui.sideTitle,
+        iconButton("chevron-left", "Close the sidebar", false, function () {
+          openSide("");
+        }),
+      ]),
+      h("div", { class: "writer-side__body" }, SIDES.map(function (s) { return ui.sides[s[0]]; })),
+    ]);
+
+    // The Markdown: formatting buttons, then the editor.
+    ui.toolbar = h(
+      "div",
+      { class: "writer-toolbar writer-editor__tools", role: "toolbar", "aria-label": "Formatting" },
+      TOOLS.map(function (tool) {
+        return iconButton(tool.icon, tool.label, false, function () {
+          if (ui.cm || ui.textarea) tool.run(editorArea());
+        });
+      }).concat([
+        h("span", { class: "writer-editor__hint", html: "Type <kbd>/</kbd> for a component · <kbd>Ctrl</kbd>+<kbd>Space</kbd> suggests · <kbd>Ctrl</kbd>+<kbd>.</kbd> edits one in a form" }),
+      ])
+    );
+    ui.editorHost = h("div", { class: "writer-editor__host" }, [h("div", { class: "writer-editor__loading", text: "Loading the editor…" })]);
+    ui.welcome = h("div", { class: "writer-welcome", hidden: true });
+    ui.editorPane = h("section", { class: "writer-editor", "aria-label": "Markdown" }, [ui.toolbar, ui.editorHost, ui.welcome]);
+
     ui.preview = h("div", { class: "writer-preview" });
     ui.preview.addEventListener("click", function (event) {
       var part = event.target.closest && event.target.closest(".writer-pv");
-      if (!part || event.target.closest("a, label, summary, input")) return;
-      var card = ui.blocks.querySelector('[data-block="' + part.getAttribute("data-block") + '"]');
-      if (card) {
-        card.scrollIntoView({ block: "center", behavior: "smooth" });
-        var first = card.querySelector("input, textarea, select");
-        if (first) first.focus({ preventScroll: true });
+      if (!part || event.target.closest("a, label, summary, input, button")) return;
+      var b = blockById(part.getAttribute("data-block"));
+      if (!b) return;
+      if (ui.view === "preview") {
+        if (b.type !== "text") openForm(b);
+        return;
+      }
+      goTo(b.from, b.from);
+    });
+    ui.preview.addEventListener("dblclick", function (event) {
+      var part = event.target.closest && event.target.closest(".writer-pv");
+      var b = part && blockById(part.getAttribute("data-block"));
+      if (b && ui.view === "preview") {
+        setView(wide() ? "split" : "markdown");
+        goTo(b.from, b.from);
       }
     });
-    ui.panels.preview.appendChild(ui.preview);
-    ui.side = h("div", { class: "writer__side" }, [tabbar].concat(Object.keys(ui.panels).map(function (k) { return ui.panels[k]; })));
+    ui.previewPane = h("section", { class: "writer-previewpane", "aria-label": "Preview" }, [ui.preview]);
+
+    ui.formBox = h("section", { class: "writer-form", hidden: true, "aria-label": "Component form" });
+    // Only changes made in the form are written back, so opening it never
+    // reformats Markdown the writer typed themselves.
+    ["input", "change", "click"].forEach(function (type) {
+      ui.formBox.addEventListener(
+        type,
+        function (event) {
+          if (ui.form && !event.target.closest(".writer-form__head")) ui.form.edited = true;
+        },
+        true
+      );
+    });
+    ui.formBox.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" || (event.key === "." && (event.ctrlKey || event.metaKey))) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeForm(true);
+      }
+    });
+
+    ui.work = h("div", { class: "writer__work" }, [ui.rail, ui.sidebar, ui.editorPane, ui.previewPane, ui.formBox]);
 
     root.appendChild(ui.bar);
-    root.appendChild(ui.editor);
-    root.appendChild(ui.side);
+    root.appendChild(ui.titleBar);
+    root.appendChild(ui.work);
 
     root.addEventListener("dragover", function (event) {
       if (event.dataTransfer && Array.prototype.indexOf.call(event.dataTransfer.types, "Files") >= 0) event.preventDefault();
     });
     root.addEventListener("drop", function (event) {
       var file = event.dataTransfer && event.dataTransfer.files[0];
-      if (!file || event.target.closest("textarea")) return;
+      if (!file || event.target.closest("textarea, .cm-editor")) return;
       event.preventDefault();
       if (/\.(md|markdown|zip)$/i.test(file.name)) openFile(file);
     });
+    root.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && root.classList.contains("writer--focus") && !event.defaultPrevented && !document.querySelector(".writer-dialog[open]")) setFocus(false);
+    });
 
+    drawComponents();
     drawSetup();
     drawAssets(true);
-    drawBlocks();
-    showPanel(read(PANEL_KEY) || "preview");
+    updateTitleBar();
+    setView(read(VIEW_KEY) || "split");
+    openSide(read(SIDE_KEY) == null ? "components" : read(SIDE_KEY));
     updateStatus();
+    updateWelcome();
     loadScript(MARKED_SRC).then(function () {
       if (window.marked) window.marked.use({ gfm: true });
       render();
     });
+    loadScript(CM_SRC).then(createEditor, fallbackEditor);
     render();
+  }
+
+  function wide() {
+    return window.matchMedia("(min-width: 60em)").matches;
+  }
+
+  function setView(mode) {
+    if (!ui.viewButtons[mode]) mode = "split";
+    ui.view = mode;
+    write(VIEW_KEY, mode);
+    ui.root.setAttribute("data-view", mode);
+    Object.keys(ui.viewButtons).forEach(function (key) {
+      ui.viewButtons[key].setAttribute("aria-pressed", key === mode ? "true" : "false");
+    });
+    renderPreview();
+    if (ui.cm) ui.cm.requestMeasure();
+  }
+
+  function setFocus(on) {
+    ui.root.classList.toggle("writer--focus", on);
+    document.documentElement.classList.toggle("writer-focus-lock", on);
+    ui.focusButton.replaceWith((ui.focusButton = iconButton(on ? "fullscreen-exit" : "fullscreen", on ? "Leave focus (Esc)" : "Focus: fill the window with the writer (Esc leaves)", false, function () {
+      setFocus(!ui.root.classList.contains("writer--focus"));
+    })));
+    if (ui.cm) {
+      ui.cm.requestMeasure();
+      ui.cm.focus();
+    }
+  }
+
+  function openSide(name) {
+    if (name && !ui.sides[name]) name = "components";
+    ui.side = name || "";
+    write(SIDE_KEY, ui.side);
+    ui.root.setAttribute("data-side", ui.side);
+    SIDES.forEach(function (s) {
+      ui.sides[s[0]].hidden = s[0] !== ui.side;
+      ui.railButtons[s[0]].setAttribute("aria-pressed", s[0] === ui.side ? "true" : "false");
+      if (s[0] === ui.side) ui.sideTitle.textContent = s[1];
+    });
+    if (ui.side === "page") drawSetup();
+    if (ui.side === "assets") drawAssets(true);
+    if (ui.side === "checks") renderChecks(runChecks());
+    if (ui.side === "components" && ui.componentSearch && document.activeElement === document.body) ui.componentSearch.focus();
+    if (ui.cm) ui.cm.requestMeasure();
+  }
+
+  function updateTitleBar() {
+    if (!ui.path) return;
+    var m = state.meta;
+    if (document.activeElement !== ui.title && ui.title.value !== m.title) ui.title.value = m.title;
+    var tag = { unlisted: "Not in the menu", "draft-prod": "Staging only", draft: "Draft" }[m.visibility];
+    ui.path.innerHTML = "";
+    ui.path.appendChild(icon("file-cog-outline"));
+    ui.path.appendChild(h("code", { text: filePath() }));
+    if (m.mode === "update") ui.path.appendChild(h("span", { class: "writer-title__tag", text: "Change" }));
+    if (tag) ui.path.appendChild(h("span", { class: "writer-title__tag", text: tag }));
   }
 
   function datalists() {
@@ -3690,9 +4084,73 @@
     ]);
   }
 
+  /* ── Sidebar: components ── */
+
+  function drawComponents() {
+    var box = ui.sides.components;
+    box.innerHTML = "";
+    var search = h("input", { class: "writer-input", type: "search", placeholder: "Search, such as: error, tabs, warning", "aria-label": "Search components" });
+    ui.componentSearch = search;
+    var list = h("div", { class: "writer-needs writer-needs--side" });
+    function draw() {
+      var q = search.value.trim().toLowerCase();
+      list.innerHTML = "";
+      [["Basics", true], ["The reader wants to…", false]].forEach(function (group) {
+        var items = NEEDS.filter(function (n) {
+          return !!n.basic === group[1] && (!q || (n.need + " " + n.name + " " + (n.rather || "")).toLowerCase().indexOf(q) >= 0);
+        });
+        if (!items.length) return;
+        list.appendChild(h("div", { class: "writer-needs__group", text: group[0] }));
+        items.forEach(function (n) {
+          var index = NEEDS.indexOf(n);
+          list.appendChild(
+            h(
+              "button",
+              {
+                type: "button",
+                class: "writer-need",
+                draggable: "true",
+                title: "Click to add it at the cursor, or drag it into the Markdown" + (n.rather ? ". Rather than " + n.rather + "." : "."),
+                onclick: function () {
+                  insertNeed(n, null, false);
+                },
+                ondragstart: function (event) {
+                  event.dataTransfer.effectAllowed = "copy";
+                  event.dataTransfer.setData("application/x-writer-component", String(index));
+                  event.dataTransfer.setData("text/plain", snippetText(snippetFor(n)));
+                },
+              },
+              [
+                icon(TYPES[n.type].icon),
+                h("span", { class: "writer-need__text" }, [h("span", { class: "writer-need__name", text: n.name }), h("span", { class: "writer-need__need", text: n.need })]),
+                h("span", { class: "writer-need__drag", "aria-hidden": "true", html: (data.ui["drag-vertical"] || "") }),
+              ]
+            )
+          );
+        });
+      });
+      if (!list.children.length) list.appendChild(h("div", { class: "writer-needs__none", text: "Nothing matches. When nothing fits, write a paragraph: it's usually the best option." }));
+    }
+    search.addEventListener("input", draw);
+    search.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        var first = list.querySelector(".writer-need");
+        if (first) first.click();
+      }
+    });
+    draw();
+    box.appendChild(search);
+    box.appendChild(list);
+    box.appendChild(h("p", { class: "writer-side__foot" }, ["Not sure? ", h("a", { href: BASE + "writing-guide/choosing-components/", target: "_blank", rel: "noopener", text: "Choosing components" }), " explains each one."]));
+  }
+
+  /* ── Sidebar: page settings ── */
+
   function drawSetup() {
     var m = state.meta;
-    var box = ui.setup;
+    var box = ui.sides && ui.sides.page;
+    if (!box) return;
     box.innerHTML = "";
     var slugInput = h("input", {
       class: "writer-input",
@@ -3701,24 +4159,14 @@
       oninput: function () {
         m.slug = slugInput.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
         m.slugEdited = !!slugInput.value;
+        updateTitleBar();
         changed();
       },
       onchange: function () {
         m.slug = slugify(slugInput.value);
         slugInput.value = m.slug;
         m.slugEdited = !!m.slug;
-        changed();
-      },
-    });
-    var title = input(m, "title", {
-      class: "writer-input writer-input--title",
-      placeholder: "Page title, such as: Create a resource group",
-      oninput: function () {
-        m.title = title.value;
-        if (!m.slugEdited) {
-          m.slug = "";
-          slugInput.placeholder = slugify(m.title) || "new-page";
-        }
+        updateTitleBar();
         changed();
       },
     });
@@ -3730,54 +4178,38 @@
       syncPaths();
       drawSetup();
       drawAssets(true);
-      drawBlocks();
+      updateTitleBar();
     });
-    box.appendChild(h("div", { class: "writer-setup__head" }, [h("span", { class: "writer-block__type" }, [icon("file-document-plus-outline"), h("span", { text: "Page" })])]));
-    box.appendChild(field("Title", title));
-    var where = [field("Folder (the tab it appears under)", folder, "grow")];
+    box.appendChild(field("Folder (the tab it appears under)", folder));
     if (m.folder === "__new__") {
-      where.push(
+      box.appendChild(
         field("New folder name", input(m, "newFolder", {
           placeholder: "billing",
+          oninput: function (event) {
+            m.newFolder = event.target.value;
+            updateTitleBar();
+            changed();
+          },
           onchange: function () {
             syncPaths();
             changed();
           },
-        }), "narrow")
+        }))
       );
     }
-    box.appendChild(row(where));
+    box.appendChild(field("File name", h("span", { class: "writer-with-suffix" }, [slugInput, h("span", { text: ".md" })]), null, "Lowercase words joined by hyphens. It becomes the page's address."));
     box.appendChild(
-      row([
-        field("File name", h("span", { class: "writer-with-suffix" }, [slugInput, h("span", { text: ".md" })]), "grow", "Lowercase words joined by hyphens. It becomes the page's address."),
-        field(
-          "Visibility",
-          select(m, "visibility", [
-            ["listed", "Published, in the menu"],
-            ["unlisted", "Published, not in the menu"],
-            ["draft-prod", "Staging only, for review"],
-            ["draft", "Draft, not published"],
-          ]),
-          "narrow"
-        ),
-      ])
+      field(
+        "Visibility",
+        select(m, "visibility", [
+          ["listed", "Published, in the menu"],
+          ["unlisted", "Published, not in the menu"],
+          ["draft-prod", "Staging only, for review"],
+          ["draft", "Draft, not published"],
+        ], false, updateTitleBar)
+      )
     );
-
-    var details = h("div", { class: "writer-setup__details", hidden: !ui.detailsOpen });
-    var toggle = h(
-      "button",
-      {
-        type: "button",
-        class: "writer-disclosure",
-        "aria-expanded": ui.detailsOpen ? "true" : "false",
-        onclick: function () {
-          ui.detailsOpen = !ui.detailsOpen;
-          toggle.setAttribute("aria-expanded", ui.detailsOpen ? "true" : "false");
-          details.hidden = !ui.detailsOpen;
-        },
-      },
-      [h("span", { text: "Page details" }), h("span", { class: "writer-disclosure__hint", text: "Who it's for, who owns it, when it was checked" })]
-    );
+    box.appendChild(h("div", { class: "writer-side__group", text: "Who it's for, who owns it, when it was checked" }));
     var platforms = h(
       "div",
       { class: "writer-row" },
@@ -3795,23 +4227,24 @@
         return h("label", { class: "writer-check" }, [box2, h("span", { class: "writer-check__icon", html: data.platforms[key].icon }), h("span", { text: data.platforms[key].label })]);
       })
     );
-    details.appendChild(field("Applies to", platforms, null, "Leave all unticked for pages that apply everywhere."));
-    details.appendChild(
+    box.appendChild(field("Applies to", platforms, null, "Leave all unticked for pages that apply everywhere."));
+    box.appendChild(field("Owner", input(m, "owner", { placeholder: "Platform team" }), null, "A team, not a person."));
+    box.appendChild(
       row([
-        field("Owner", input(m, "owner", { placeholder: "Platform team" }), "grow", "A team, not a person."),
-        field("Last reviewed", input(m, "last_reviewed", { type: "date" }), "narrow", "Only after following the page end to end."),
-        field("Review every", input(m, "review_every", { type: "number", min: "1", max: "24", placeholder: String(data.review_months || 6) }), "narrow", "Months. 3 for previews."),
+        field("Last reviewed", input(m, "last_reviewed", { type: "date" }), "grow"),
+        field("Review every", input(m, "review_every", { type: "number", min: "1", max: "24", placeholder: String(data.review_months || 6) }), "narrow"),
       ])
     );
-    details.appendChild(mdField(m, "extraFront", { label: "Other front matter (YAML, kept as written)", code: true, rows: 1, placeholder: "hide:\n  - toc" }));
-    box.appendChild(toggle);
-    box.appendChild(details);
+    box.appendChild(h("span", { class: "writer-field__hint", text: "Reviewed only after following the page end to end. Review every: months, 3 for previews." }));
+    box.appendChild(mdField(m, "extraFront", { label: "Other front matter (YAML, kept as written)", code: true, rows: 1, placeholder: "hide:\n  - toc" }));
   }
 
-  // The images and files the page brings: where each goes, and whether the
-  // page uses it (only those go in the bundle). Redrawn when that changes.
+  /* ── Sidebar: images and files ──
+     Where each goes, and whether the page uses it (only those go in the
+     bundle). Redrawn when that changes. */
+
   function drawAssets(force) {
-    var box = ui.assets;
+    var box = ui.sides && ui.sides.assets;
     if (!box) return;
     var md = toMarkdown();
     var dir = assetDir();
@@ -3828,44 +4261,58 @@
     ui.assetsSig = sig;
     box.innerHTML = "";
     box.appendChild(
-      h("div", { class: "writer-setup__head" }, [
-        h("span", { class: "writer-block__type" }, [icon("paperclip"), h("span", { text: "Images and files" })]),
-        h("span", { class: "writer-block__actions" }, [
-          button("Attach a file", "paperclip", "md-button--ghost md-button--sm", function () {
-            pickFile(function (name) {
-              toast("Attached " + name + ". Now link to it from the text: the link button next to it copies a link to paste.");
-            });
-          }),
-        ]),
+      h("div", { class: "writer-row" }, [
+        button("Upload an image", "image-outline", "md-button--sm", function () {
+          pickImage(function (name) {
+            toast("Uploaded " + name + ". Drag it into the Markdown, or use its + button.");
+          });
+        }),
+        button("Attach a file", "paperclip", "md-button--ghost md-button--sm", function () {
+          pickFile(function (name) {
+            toast("Attached " + name + ". Drag it into the Markdown where readers should download it, or use its + button.");
+          });
+        }),
       ])
     );
     if (!rows.length) {
-      box.appendChild(h("div", { class: "writer-block__help", text: "Nothing yet. Add a screenshot with the Screenshot component or the image button in any text box, or paste one. Attach a file for readers to download with the paperclip." }));
+      box.appendChild(h("div", { class: "writer-block__help", text: "Nothing yet. Paste or drop a screenshot into the Markdown, or upload one here. Attach a file for readers to download." }));
     }
     var list = h("div", { class: "writer-assets__list" });
     rows.forEach(function (r) {
       var blob = state[r.kind][r.name];
       list.appendChild(
-        h("div", { class: "writer-asset" + (r.used ? "" : " writer-asset--unused") }, [
-          r.kind === "images"
-            ? h("img", { class: "writer-asset__thumb", src: assetUrl(r.kind, r.name), alt: "" })
-            : h("span", { class: "writer-asset__thumb writer-asset__thumb--file", text: extOf(r.name) }),
-          h("span", { class: "writer-asset__text" }, [
-            h("code", { class: "writer-asset__name", title: "docs/" + assetPath(r.kind, dir, r.name), text: r.name }),
-            h("span", { class: "writer-asset__meta", text: megabytes(blob.size) + (r.used ? "" : " · not on the page, so not in the bundle") }),
-          ]),
-          r.kind === "files"
-            ? iconButton("link-variant", "Copy a link to it, to paste into the text", false, function () {
-                copyText("[" + downloadLabel(r.name) + "](" + fileRel(r.name) + ")", "Link copied. Paste it where readers should download the file.");
-              })
-            : null,
-          iconButton("pencil-outline", "Rename", false, function () {
-            openRename(r.kind, r.name);
-          }),
-          iconButton("trash-can-outline", "Remove", false, function () {
-            removeAsset(r.kind, r.name);
-          }),
-        ])
+        h(
+          "div",
+          {
+            class: "writer-asset" + (r.used ? "" : " writer-asset--unused"),
+            draggable: "true",
+            title: "Drag into the Markdown",
+            ondragstart: function (event) {
+              event.dataTransfer.effectAllowed = "copy";
+              event.dataTransfer.setData("application/x-writer-asset", r.kind + "/" + r.name);
+              event.dataTransfer.setData("text/plain", assetMarkdown(r.kind, r.name));
+            },
+          },
+          [
+            r.kind === "images"
+              ? h("img", { class: "writer-asset__thumb", src: assetUrl(r.kind, r.name), alt: "" })
+              : h("span", { class: "writer-asset__thumb writer-asset__thumb--file", text: extOf(r.name) }),
+            h("span", { class: "writer-asset__text" }, [
+              h("code", { class: "writer-asset__name", title: "docs/" + assetPath(r.kind, dir, r.name), text: r.name }),
+              h("span", { class: "writer-asset__meta", text: megabytes(blob.size) + (r.used ? "" : " · not on the page, so not in the bundle") }),
+            ]),
+            iconButton("plus", r.kind === "images" ? "Show it on the page, at the cursor" : "Link to it, at the cursor", !ui.cm && !ui.textarea, function () {
+              if (r.kind === "images") insertSnippet("![#{Describe what the image shows}](" + imageRel(r.name) + ")", null);
+              else insertFileLink(editorArea(), r.name);
+            }),
+            iconButton("pencil-outline", "Rename", false, function () {
+              openRename(r.kind, r.name);
+            }),
+            iconButton("trash-can-outline", "Remove", false, function () {
+              removeAsset(r.kind, r.name);
+            }),
+          ]
+        )
       );
     });
     if (rows.length) box.appendChild(list);
@@ -3880,162 +4327,84 @@
     );
   }
 
-  function drawBlocks() {
-    ui.blocks.innerHTML = "";
-    if (!state.blocks.length) {
-      ui.blocks.appendChild(recipePicker(false));
-      ui.addLast.hidden = true;
-      return;
-    }
-    ui.addLast.hidden = false;
-    state.blocks.forEach(function (b, i) {
-      ui.blocks.appendChild(blockCard(b, i));
+  function assetMarkdown(kind, name) {
+    return kind === "images" ? "![Describe what the image shows](" + imageRel(name) + ")" : "[" + downloadLabel(name) + "](" + fileRel(name) + ")";
+  }
+
+  /* ── Sidebar: checks ── */
+
+  function renderChecks(checks) {
+    var box = ui.sides.checks;
+    box.innerHTML = "";
+    var list = h("ul", { class: "writer-checks" });
+    // Example text is underlined where it is; here it's one line.
+    var hints = checks.filter(function (c) {
+      return c.group === "hints";
     });
-  }
-
-  function blockCard(b, i) {
-    var t = TYPES[b.type];
-    var card = h("section", {
-      class: "writer-card writer-block writer-block--" + b.type,
-      "data-block": b.id,
-      "aria-label": t.label,
-      onfocusin: function () {
-        setActive(b.id);
-      },
-    });
-    card.appendChild(
-      h("div", { class: "writer-block__head" }, [
-        h("span", { class: "writer-block__type" }, [icon(t.icon), h("span", { text: t.label })]),
-        h("span", { class: "writer-block__actions" }, [
-          iconButton("arrow-up", "Move up", i === 0, function () {
-            moveBlock(i, -1);
-          }),
-          iconButton("arrow-down", "Move down", i === state.blocks.length - 1, function () {
-            moveBlock(i, 1);
-          }),
-          iconButton("content-copy", "Duplicate", false, function () {
-            var twin = copy(b);
-            twin.id = "b" + nextId++;
-            state.blocks.splice(i + 1, 0, twin);
-            drawBlocks();
-            changed();
-          }),
-          iconButton("plus", "Add a component below", false, function () {
-            openInsert(i + 1);
-          }),
-          iconButton("trash-can-outline", "Delete", false, function () {
-            deleteBlock(i);
-          }),
-        ]),
-      ])
-    );
-    if (t.help) card.appendChild(h("div", { class: "writer-block__help", text: t.help }));
-    var body = h("div", { class: "writer-block__body" });
-    t.editor(b, body);
-    card.appendChild(body);
-    return card;
-  }
-
-  function redrawBlock(b) {
-    var old = ui.blocks.querySelector('[data-block="' + b.id + '"]');
-    if (old) old.replaceWith(blockCard(b, state.blocks.indexOf(b)));
-  }
-
-  function moveBlock(i, delta) {
-    var j = i + delta;
-    if (j < 0 || j >= state.blocks.length) return;
-    var b = state.blocks.splice(i, 1)[0];
-    state.blocks.splice(j, 0, b);
-    drawBlocks();
-    changed();
-    var card = ui.blocks.querySelector('[data-block="' + b.id + '"]');
-    if (card) {
-      var again = card.querySelectorAll(".writer-block__actions .writer-icon-btn")[delta < 0 ? 0 : 1];
-      if (again && !again.disabled) again.focus();
-      else card.querySelector(".writer-block__actions .writer-icon-btn:not([disabled])").focus();
-    }
-  }
-
-  function deleteBlock(i) {
-    var b = state.blocks.splice(i, 1)[0];
-    drawBlocks();
-    changed();
-    toast(TYPES[b.type].label + " deleted.", "Undo", function () {
-      state.blocks.splice(Math.min(i, state.blocks.length), 0, b);
-      drawBlocks();
-      changed();
-    });
-  }
-
-  function insertBlock(index, type, preset) {
-    var b = makeBlock(type, preset);
-    state.blocks.splice(index, 0, b);
-    drawBlocks();
-    changed();
-    var card = ui.blocks.querySelector('[data-block="' + b.id + '"]');
-    if (card) {
-      card.scrollIntoView({ block: "center", behavior: "smooth" });
-      var first = card.querySelector(".writer-block__body input:not([type=checkbox]), .writer-block__body textarea");
-      if (first) first.focus({ preventScroll: true });
-    }
-  }
-
-  function openInsert(index) {
-    var search = h("input", { class: "writer-input", type: "search", placeholder: "Search, such as: error, tabs, warning", "aria-label": "Search components" });
-    var list = h("div", { class: "writer-needs" });
-    var node;
-    function draw() {
-      var q = search.value.trim().toLowerCase();
-      list.innerHTML = "";
-      [["Basics", true], ["The reader wants to…", false]].forEach(function (group) {
-        var items = NEEDS.filter(function (n) {
-          return !!n.basic === group[1] && (!q || (n.need + " " + n.name + " " + (n.rather || "")).toLowerCase().indexOf(q) >= 0);
-        });
-        if (!items.length) return;
-        list.appendChild(h("div", { class: "writer-needs__group", text: group[0] }));
-        items.forEach(function (n) {
-          list.appendChild(
-            h(
-              "button",
-              {
-                type: "button",
-                class: "writer-need",
-                onclick: function () {
-                  node.close();
-                  insertBlock(index, n.type, n.preset);
-                },
-              },
-              [
-                icon(TYPES[n.type].icon),
-                h("span", { class: "writer-need__text" }, [
-                  h("span", { class: "writer-need__need", text: n.need }),
-                  h("span", { class: "writer-need__name", text: n.name + (n.rather ? " · rather than " + n.rather : "") }),
-                ]),
-              ]
-            )
-          );
-        });
+    if (hints.length > 1) {
+      checks = checks.filter(function (c) {
+        return c.group !== "hints";
       });
-      if (!list.children.length) list.appendChild(h("div", { class: "writer-needs__none", text: "Nothing matches. When nothing fits, write a paragraph: it's usually the best option." }));
+      checks.unshift({ level: "warn", text: plural(hints.length, "piece") + " of example text from a recipe or component " + (hints.length === 1 ? "is" : "are") + " still on the page, underlined in the Markdown. Replace them with your own, or delete them. Show goes to the first.", at: hints[0].at });
     }
-    search.addEventListener("input", draw);
-    search.addEventListener("keydown", function (event) {
-      if (event.key === "Enter") {
-        // Otherwise the Enter lands in the new block's first field.
-        event.preventDefault();
-        var first = list.querySelector(".writer-need");
-        if (first) first.click();
+    if (!checks.length) list.appendChild(h("li", { class: "writer-checks__item writer-checks__item--ok" }, [icon("check-circle-outline"), h("span", { text: "Nothing to fix that can be checked automatically." })]));
+    checks.forEach(function (c) {
+      var range = checkRange(c);
+      var item = h("li", { class: "writer-checks__item writer-checks__item--" + c.level }, [icon(c.level === "warn" ? "alert-outline" : "information-outline"), h("span", { text: c.text })]);
+      if (range) {
+        item.appendChild(
+          h("button", {
+            type: "button",
+            class: "writer-link-btn",
+            text: "Show",
+            onclick: function () {
+              if (ui.view === "preview") setView(wide() ? "split" : "markdown");
+              goTo(range.from, range.to);
+            },
+          })
+        );
+      } else if (/title/.test(c.text)) {
+        item.appendChild(h("button", { type: "button", class: "writer-link-btn", text: "Show", onclick: function () { ui.title.focus(); } }));
+      } else if (/Page settings/.test(c.text)) {
+        item.appendChild(h("button", { type: "button", class: "writer-link-btn", text: "Show", onclick: function () { openSide("page"); } }));
       }
+      list.appendChild(item);
     });
-    draw();
-    node = dialog("What does the reader need?", [
-      search,
-      list,
-      h("p", { class: "writer-dialog__foot" }, ["Not sure? ", h("a", { href: BASE + "writing-guide/choosing-components/", target: "_blank", rel: "noopener", text: "Choosing components" }), " explains each one."]),
-    ]);
-    node.classList.add("writer-dialog--wide");
-    search.focus();
+    box.appendChild(list);
+    box.appendChild(h("p", { class: "writer-panel__lead", text: "Also check by eye before you publish:" }));
+    box.appendChild(
+      h(
+        "ul",
+        { class: "writer-checks writer-checks--manual" },
+        [
+          "Read the page skipping every box, badge and button. It still makes sense.",
+          "No subscription IDs, account IDs, tenant names or email addresses in screenshots or examples.",
+          "The last reviewed date is from a real run-through, not a typo fix.",
+        ].map(function (text) {
+          return h("li", { class: "writer-checks__item" }, [icon("check-circle-outline"), h("span", { text: text })]);
+        })
+      )
+    );
   }
+
+  // Where in the body a check points, or null.
+  function checkRange(c) {
+    if (c.at && typeof c.at === "object" && !(c.at instanceof RegExp)) return c.at;
+    var b = c.id ? blockById(c.id) : null;
+    if (!b) return null;
+    var text = state.body.slice(b.from, b.to);
+    if (c.at instanceof RegExp) {
+      var m = c.at.exec(text);
+      if (m) return { from: b.from + m.index, to: b.from + m.index + m[0].length };
+    } else if (c.at) {
+      var i = text.indexOf(c.at);
+      if (i >= 0) return { from: b.from + i, to: b.from + i + c.at.length };
+    }
+    var nl = text.indexOf("\n");
+    return { from: b.from, to: b.from + (nl < 0 ? text.length : nl) };
+  }
+
+  /* ── New pages and opened files ── */
 
   function recipePicker(inDialog, done) {
     var grid = h("div", { class: "writer-recipes" });
@@ -4043,7 +4412,7 @@
       grid.appendChild(
         h("div", { class: "writer-recipes__intro" }, [
           h("span", { class: "writer-recipes__title", text: "Start from a recipe" }),
-          h("span", { text: "Each one lays out a page the way the writing guide recommends. Or open a .md file to edit it." }),
+          h("span", { text: "Each lays out a page the way the writing guide recommends, with example text to replace (Tab jumps to the next). Or open a .md file to edit it." }),
         ])
       );
     }
@@ -4079,23 +4448,33 @@
   }
 
   function hasContent() {
-    return state.meta.title.trim() || liveBlocks().length;
+    return !!(state.meta.title.trim() || state.body.trim());
+  }
+
+  // The welcome card over an empty editor, until there's something to edit.
+  function updateWelcome() {
+    if (!ui.welcome) return;
+    var show = !hasContent() && !ui.welcomeDone;
+    if (show && !ui.welcome.firstChild) ui.welcome.appendChild(recipePicker(false));
+    ui.welcome.hidden = !show;
   }
 
   function startRecipe(recipe) {
-    nextId = 1;
-    state = { meta: Object.assign(emptyMeta(), copy(recipe.meta || {})), blocks: [], images: {}, files: {}, assetsLoaded: true, assetsSaved: true };
-    recipe.blocks.forEach(function (spec) {
-      state.blocks.push(makeBlock(spec[0], spec[1]));
-    });
+    closeForm(false);
+    state = newState(Object.assign(emptyMeta(), copy(recipe.meta || {})), "");
     state.meta.at = { folder: folderPath(), assets: assetDir() };
     storeAllAssets();
-    drawSetup();
-    drawAssets(true);
-    drawBlocks();
+    loadPage();
+    ui.welcomeDone = true;
+    var template = recipe.md.join("\n");
+    if (template) {
+      addHints(template);
+      if (ui.cm) window.CM.snippet(template)(ui.cm, null, 0, 0);
+      else editBody([{ from: 0, to: 0, insert: snippetText(template) }]);
+    }
+    updateWelcome();
     changed();
-    var title = ui.setup.querySelector(".writer-input--title");
-    if (title) title.focus();
+    ui.title.focus();
   }
 
   function openFile(file) {
@@ -4107,18 +4486,8 @@
     reader.onload = function () {
       if (hasContent() && !window.confirm("Replace the page you're writing with " + file.name + "? Download it first if you want to keep it.")) return;
       var doc = parseDocument(String(reader.result));
-      nextId = 1;
-      state = {
-        meta: doc.meta,
-        blocks: doc.blocks.map(function (b) {
-          b.id = "b" + nextId++;
-          return b;
-        }),
-        images: {},
-        files: {},
-        assetsLoaded: true,
-        assetsSaved: true,
-      };
+      closeForm(false);
+      state = newState(doc.meta, doc.body);
       state.meta.mode = "update";
       state.meta.slug = file.name.replace(/\.(md|markdown)$/i, "");
       state.meta.slugEdited = true;
@@ -4130,26 +4499,942 @@
       // pages; they stay where they are. New ones go in the page's folders.
       state.meta.at = { folder: folderPath(), assets: assetDir() };
       storeAllAssets();
-      drawSetup();
-      drawAssets(true);
-      drawBlocks();
+      loadPage();
       changed();
-      toast("Opened " + file.name + (matches.length === 1 ? " from docs/" + matches[0].src + "." : ". Check the folder it belongs in."));
+      toast("Opened " + file.name + (matches.length === 1 ? " from docs/" + matches[0].src + "." : ". Check the folder it belongs in, under Page settings."));
     };
     reader.readAsText(file);
   }
 
-  function showPanel(name) {
-    if (!ui.panels[name]) name = "preview";
-    ui.panel = name;
-    write(PANEL_KEY, name);
-    Object.keys(ui.panels).forEach(function (key) {
-      ui.panels[key].hidden = key !== name;
-      ui.tabButtons[key].setAttribute("aria-selected", key === name ? "true" : "false");
-      ui.tabButtons[key].tabIndex = key === name ? 0 : -1;
+  // Shows the page in state: a new, opened or loaded one.
+  function loadPage() {
+    blockCache = { body: null, blocks: [] };
+    state.body = lines(state.body).join("\n");
+    if (ui.cm) ui.cm.setState(window.CM.EditorState.create({ doc: state.body, extensions: ui.extensions }));
+    else if (ui.textarea) ui.textarea.value = state.body;
+    if (ui.title) ui.title.value = state.meta.title;
+    ui.lastActive = null;
+    drawSetup();
+    drawAssets(true);
+    updateTitleBar();
+    updateWelcome();
+  }
+
+  function addHints(template) {
+    var hints = state.meta.hints || (state.meta.hints = []);
+    snippetHints(template).forEach(function (hint) {
+      if (hints.indexOf(hint) < 0) hints.push(hint);
     });
+    if (hints.length > 300) hints.splice(0, hints.length - 300);
+  }
+
+  /* ── Changing the Markdown ── */
+
+  // changes: [{ from, to, insert }] in the body, as it is now.
+  function editBody(changes) {
+    if (ui.cm) {
+      ui.cm.dispatch({ changes: changes });
+      return;
+    }
+    var body = state.body;
+    changes
+      .slice()
+      .sort(function (a, b) {
+        return b.from - a.from;
+      })
+      .forEach(function (c) {
+        body = body.slice(0, c.from) + (c.insert || "") + body.slice(c.to == null ? c.from : c.to);
+      });
+    state.body = body;
+    if (ui.textarea) ui.textarea.value = body;
+    scheduleRender();
+  }
+
+  // The editor, as the formatting tools expect a textarea to be.
+  function editorArea() {
+    if (ui.textarea || !ui.cm) return ui.textarea;
+    var view = ui.cm;
+    return {
+      cm: view,
+      get value() {
+        return view.state.doc.toString();
+      },
+      get selectionStart() {
+        return view.state.selection.main.from;
+      },
+      get selectionEnd() {
+        return view.state.selection.main.to;
+      },
+      setSelectionRange: function (from, to) {
+        view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+      },
+      focus: function () {
+        view.focus();
+      },
+    };
+  }
+
+  function goTo(from, to) {
+    if (ui.cm) {
+      ui.cm.dispatch({ selection: { anchor: from, head: to == null ? from : to }, effects: window.CM.EditorView.scrollIntoView(from, { y: "center" }) });
+      ui.cm.focus();
+    } else if (ui.textarea) {
+      ui.textarea.focus();
+      ui.textarea.setSelectionRange(from, to == null ? from : to);
+    }
+  }
+
+  // Lines of the body: { from, to, text, number } like CodeMirror's.
+  function lineAt(pos) {
+    var body = state.body;
+    var from = body.lastIndexOf("\n", pos - 1) + 1;
+    var to = body.indexOf("\n", pos);
+    if (to < 0) to = body.length;
+    return { from: from, to: to, text: body.slice(from, to) };
+  }
+
+  // The component, or the paragraph, a position is in.
+  function unitAt(pos) {
+    var b = blockAt(pos);
+    if (b && b.type !== "text") return { from: b.from, to: b.to };
+    var line = lineAt(pos);
+    var first = line;
+    var last = line;
+    var body = state.body;
+    while (first.from > 0) {
+      var prev = lineAt(first.from - 1);
+      if (!prev.text.trim()) break;
+      first = prev;
+    }
+    while (last.to < body.length) {
+      var next = lineAt(last.to + 1);
+      if (!next.text.trim()) break;
+      last = next;
+    }
+    return { from: first.from, to: last.to };
+  }
+
+  // Where a component goes: after what the cursor is in, or right there on
+  // an empty line. With drop, before or after, whichever half it's over.
+  function insertionPoint(pos, drop) {
+    var line = lineAt(pos);
+    if (!line.text.trim()) return line.from;
+    var unit = unitAt(pos);
+    if (!drop) return unit.to;
+    var before = state.body.slice(unit.from, line.from).split("\n").length;
+    var after = state.body.slice(line.to, unit.to).split("\n").length;
+    return before <= after ? unit.from : unit.to;
+  }
+
+  function insertNeed(n, pos, dropped) {
+    if (n.type === "image" && !dropped) {
+      pickImage(function (name) {
+        insertSnippet(snippetFor(n, imageRel(name)), pos);
+      });
+      return;
+    }
+    var at = insertSnippet(snippetFor(n), pos);
+    // Dropped: there was no click to open a file picker with. The form has
+    // an Upload button.
+    if (n.type === "image" && at != null) {
+      var b = blockAt(at);
+      if (b && b.type === "image") openForm(b);
+    }
+  }
+
+  // Inserts a snippet as a block of its own, with an empty line either
+  // side. pos: a line boundary from insertionPoint(), or null for after
+  // the cursor. Returns where it went.
+  function insertSnippet(template, pos) {
+    addHints(template);
+    ui.welcomeDone = true;
+    updateWelcome();
+    if (pos == null) {
+      var head = ui.cm ? ui.cm.state.selection.main.head : ui.textarea ? ui.textarea.selectionStart : state.body.length;
+      pos = insertionPoint(head, false);
+    }
+    var before = state.body.slice(0, pos);
+    var after = state.body.slice(pos);
+    var pre = !before || /\n\n$/.test(before) ? "" : /\n$/.test(before) ? "\n" : "\n\n";
+    var post = !after || /^\n\n/.test(after) ? "" : /^\n/.test(after) ? "\n" : "\n\n";
+    var at = pos + pre.length;
+    if (ui.cm) {
+      // The gap first, so the snippet starts on a line with no indent.
+      ui.cm.dispatch({ changes: { from: pos, insert: pre + post }, selection: { anchor: at } });
+      window.CM.snippet(template)(ui.cm, null, at, at);
+      ui.cm.focus();
+    } else {
+      editBody([{ from: pos, to: pos, insert: pre + snippetText(template) + post }]);
+      if (ui.textarea) ui.textarea.focus();
+    }
+    changed();
+    return at;
+  }
+
+  /* ── The editor (CodeMirror) ── */
+
+  function createEditor() {
+    var CM = window.CM;
+    if (!CM || !ui.root || !ui.root.isConnected) {
+      if (!CM) fallbackEditor();
+      return;
+    }
+    ui.extensions = editorExtensions(CM);
+    ui.editorHost.innerHTML = "";
+    ui.cm = new CM.EditorView({
+      parent: ui.editorHost,
+      state: CM.EditorState.create({ doc: state.body, extensions: ui.extensions }),
+    });
+    ui.cm.scrollDOM.addEventListener("scroll", syncScroll, { passive: true });
+    drawAssets(true);
     render();
   }
+
+  // Without CodeMirror (it didn't load): a plain textarea still works.
+  function fallbackEditor() {
+    if (!ui.editorHost || ui.cm) return;
+    ui.editorHost.innerHTML = "";
+    ui.textarea = h("textarea", {
+      class: "writer-input writer-textarea writer-editor__fallback",
+      spellcheck: "true",
+      "aria-label": "Page Markdown",
+      value: state.body,
+      oninput: function () {
+        state.body = ui.textarea.value;
+        scheduleRender();
+      },
+    });
+    ui.editorHost.appendChild(ui.textarea);
+    ui.editorHost.appendChild(h("p", { class: "writer-note writer-note--warn", text: "The editor didn't load, so this is plain text: no colours or suggestions. Reload the page to try again." }));
+  }
+
+  function editorExtensions(CM) {
+    return [
+      CM.lineNumbers(),
+      CM.highlightActiveLineGutter(),
+      CM.highlightSpecialChars(),
+      CM.history(),
+      CM.drawSelection(),
+      CM.EditorState.tabSize.of(4),
+      CM.indentUnit.of("    "),
+      CM.indentOnInput(),
+      CM.closeBrackets(),
+      CM.markdownLanguage.data.of({ closeBrackets: { brackets: ["(", "[", "{"] } }),
+      CM.rectangularSelection(),
+      CM.highlightActiveLine(),
+      CM.highlightSelectionMatches(),
+      CM.EditorView.lineWrapping,
+      CM.markdown({ base: CM.markdownLanguage, codeLanguages: CM.codeLanguages }),
+      CM.syntaxHighlighting(highlightStyle(CM)),
+      CM.autocompletion({ override: completionSources(CM), icons: false, activateOnTyping: true, closeOnBlur: true, maxRenderedOptions: 60 }),
+      CM.linter(lintSource, { delay: 400 }),
+      CM.lintGutter(),
+      CM.search({ top: true }),
+      CM.placeholder("Write in Markdown. Type / for a component, or drag one in from the sidebar."),
+      componentField(CM),
+      dropField(CM),
+      pymdownMarks(CM),
+      CM.Prec.high(CM.keymap.of(writerKeys(CM))),
+      CM.keymap.of([].concat(CM.closeBracketsKeymap, CM.searchKeymap, CM.historyKeymap, CM.lintKeymap, CM.defaultKeymap, [CM.indentWithTab])),
+      CM.EditorView.updateListener.of(onEditorUpdate),
+      CM.EditorView.domEventHandlers(editorEvents(CM)),
+      CM.EditorView.contentAttributes.of({ "aria-label": "Page Markdown", spellcheck: "true", autocorrect: "off" }),
+    ];
+  }
+
+  function writerKeys(CM) {
+    function tool(key) {
+      return function () {
+        for (var i = 0; i < TOOLS.length; i++) if (TOOLS[i].key === key) TOOLS[i].run(editorArea());
+        return true;
+      };
+    }
+    return [
+      { key: "Mod-b", run: tool("b") },
+      { key: "Mod-i", run: tool("i") },
+      { key: "Mod-k", run: tool("k") },
+      {
+        key: "Mod-.",
+        run: function (view) {
+          var b = blockAt(view.state.selection.main.head);
+          if (ui.form && b && ui.form.from === b.from) closeForm(true);
+          else if (b && b.type !== "text") openForm(b);
+          else toast("Put the cursor in a component, such as steps, a callout or tabs, to edit it in a form.");
+          return true;
+        },
+      },
+      {
+        key: "Escape",
+        run: function () {
+          if (ui.form) {
+            closeForm(true);
+            return true;
+          }
+          return false;
+        },
+      },
+    ];
+  }
+
+  function onEditorUpdate(u) {
+    if (u.docChanged) {
+      state.body = u.state.doc.toString();
+      if (ui.form && !ui.form.writing) formFollow(u);
+      if (hasContent() && !ui.welcomeDone) {
+        ui.welcomeDone = true;
+        updateWelcome();
+      }
+      scheduleRender();
+    }
+    if (u.docChanged || u.selectionSet) {
+      var b = blockAt(u.state.selection.main.head);
+      setActive(b ? b.id : null);
+    }
+  }
+
+  // Colours from the site's own code palette (themes.css), through the
+  // --writer-cm-* variables in writer.css, so all six themes carry over.
+  function highlightStyle(CM) {
+    var t = CM.tags;
+    function v(name) {
+      return "var(--writer-cm-" + name + ")";
+    }
+    return CM.HighlightStyle.define([
+      { tag: t.heading1, color: v("heading"), fontWeight: "700", fontSize: "1.15em" },
+      { tag: t.heading2, color: v("heading"), fontWeight: "700", fontSize: "1.08em" },
+      { tag: [t.heading3, t.heading4, t.heading5, t.heading6], color: v("heading"), fontWeight: "700" },
+      { tag: t.strong, fontWeight: "700", color: v("strong") },
+      { tag: t.emphasis, fontStyle: "italic" },
+      { tag: t.strikethrough, textDecoration: "line-through" },
+      { tag: t.link, color: v("link") },
+      { tag: t.url, color: v("url"), textDecoration: "underline", textDecorationColor: "color-mix(in srgb, currentColor 35%, transparent)" },
+      { tag: t.monospace, color: v("code"), fontFamily: "var(--md-code-font-family)" },
+      { tag: t.quote, color: v("quote"), fontStyle: "italic" },
+      { tag: [t.processingInstruction, t.contentSeparator, t.labelName], color: v("mark") },
+      { tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.modifier, t.operatorKeyword], color: "var(--md-code-hl-keyword-color)" },
+      { tag: [t.string, t.special(t.string), t.regexp, t.attributeValue, t.inserted], color: "var(--md-code-hl-string-color)" },
+      { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: "var(--md-code-hl-comment-color)", fontStyle: "italic" },
+      { tag: [t.number, t.integer, t.float, t.unit], color: "var(--md-code-hl-number-color)" },
+      { tag: [t.bool, t.null, t.atom, t.self, t.constant(t.variableName)], color: "var(--md-code-hl-constant-color)" },
+      { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName, t.attributeName], color: "var(--md-code-hl-function-color)" },
+      { tag: [t.propertyName, t.definition(t.propertyName), t.tagName, t.typeName, t.className, t.namespace], color: "var(--md-code-hl-keyword-color)" },
+      { tag: [t.variableName, t.definition(t.variableName)], color: "var(--md-code-hl-variable-color)" },
+      { tag: [t.operator, t.punctuation, t.bracket, t.angleBracket, t.separator], color: "var(--md-code-hl-punctuation-color)" },
+      { tag: [t.meta, t.escape, t.character, t.changed], color: "var(--md-code-hl-special-color)" },
+      { tag: t.deleted, color: "var(--md-code-hl-number-color)" },
+      { tag: t.invalid, color: "var(--writer-warn)" },
+    ]);
+  }
+
+  /* Components in the editor: a tint down the side of each one, and on the
+     one the cursor is in, a button that opens its form. */
+
+  function ChipWidget(label) {
+    this.label = label;
+  }
+
+  function componentField(CM) {
+    ChipWidget.prototype = Object.create(CM.WidgetType.prototype);
+    ChipWidget.prototype.constructor = ChipWidget;
+    ChipWidget.prototype.eq = function (other) {
+      return other.label === this.label;
+    };
+    ChipWidget.prototype.toDOM = function () {
+      var node = h("button", { type: "button", class: "cm-writer-chip", title: "Edit this " + this.label.toLowerCase() + " in a form (Ctrl+.)", tabindex: "-1" }, [icon("text-box-edit-outline"), h("span", { text: "Edit " + this.label })]);
+      node.addEventListener("mousedown", function (event) {
+        event.preventDefault();
+      });
+      node.addEventListener("click", function (event) {
+        event.preventDefault();
+        var view = ui.cm;
+        var b = view && blockAt(view.posAtDOM(node));
+        if (b && b.type !== "text") openForm(b);
+      });
+      return node;
+    };
+    ChipWidget.prototype.ignoreEvent = function () {
+      return true;
+    };
+
+    function build(st) {
+      var doc = st.doc;
+      var body = doc.toString();
+      var head = st.selection.main.head;
+      var ranges = [];
+      blocksOf(body).forEach(function (b) {
+        if (b.type === "text") return;
+        var active = head >= b.from && head <= b.to;
+        var first = doc.lineAt(b.from).number;
+        var last = doc.lineAt(b.to).number;
+        for (var n = first; n <= last; n++) {
+          var cls = "cm-comp" + (active ? " cm-comp--active" : "") + (n === first ? " cm-comp--first" : "") + (n === last ? " cm-comp--last" : "");
+          ranges.push(CM.Decoration.line({ class: cls }).range(doc.line(n).from));
+        }
+        if (active) ranges.push(CM.Decoration.widget({ widget: new ChipWidget(TYPES[b.type].label), side: -1 }).range(b.from));
+      });
+      return CM.Decoration.set(ranges, true);
+    }
+    return CM.StateField.define({
+      create: build,
+      update: function (deco, tr) {
+        return tr.docChanged || tr.selection ? build(tr.state) : deco;
+      },
+      provide: function (f) {
+        return CM.EditorView.decorations.from(f);
+      },
+    });
+  }
+
+  // Where a dragged component will land: a line across the editor.
+  var setDrop = null;
+  function dropField(CM) {
+    setDrop = CM.StateEffect.define();
+    return CM.StateField.define({
+      create: function () {
+        return CM.Decoration.none;
+      },
+      update: function (deco, tr) {
+        deco = deco.map(tr.changes);
+        tr.effects.forEach(function (e) {
+          if (!e.is(setDrop)) return;
+          if (e.value == null) deco = CM.Decoration.none;
+          else {
+            var line = tr.state.doc.lineAt(e.value);
+            var before = e.value === line.from;
+            deco = CM.Decoration.set([CM.Decoration.line({ class: before ? "cm-drop-before" : "cm-drop-after" }).range(line.from)]);
+          }
+        });
+        return deco;
+      },
+      provide: function (f) {
+        return CM.EditorView.decorations.from(f);
+      },
+    });
+  }
+
+  // Colours for the pymdownx syntax the Markdown grammar doesn't know:
+  // callout and tab lines, { attribute lists }, ++keys++ and <placeholders>.
+  function pymdownMarks(CM) {
+    var deco = {
+      admonition: CM.Decoration.mark({ class: "cm-pm-admonition" }),
+      tab: CM.Decoration.mark({ class: "cm-pm-tab" }),
+      attr: CM.Decoration.mark({ class: "cm-pm-attr" }),
+      keys: CM.Decoration.mark({ class: "cm-pm-keys" }),
+      placeholder: CM.Decoration.mark({ class: "cm-pm-placeholder" }),
+      def: CM.Decoration.mark({ class: "cm-pm-def" }),
+    };
+    var matcher = new CM.MatchDecorator({
+      regexp: /^\s*(?:!!!|\?\?\?\+?)\s+[\w-]+(?:\s+"[^"]*")?|^\s*===\+?\s+"[^"]*"|\{\s*[.#:][^{}\n]*\}|\{\s*[\w-]+="[^"\n]*"\s*\}|\+\+[\w-]+(?:\+[\w-]+)*\+\+|<[a-z0-9][a-z0-9._-]*>|^\s*:\s{3}/gi,
+      decorate: function (add, from, to, match) {
+        var text = match[0];
+        var trimmed = text.trim();
+        var kind = /^(!!!|\?\?\?)/.test(trimmed) ? "admonition" : /^===/.test(trimmed) ? "tab" : trimmed[0] === "{" ? "attr" : /^\+\+/.test(trimmed) ? "keys" : trimmed[0] === ":" ? "def" : "placeholder";
+        if (kind === "placeholder" && HTML_TAGS.test(trimmed.slice(1, -1).toLowerCase())) return;
+        var start = from + (text.length - text.replace(/^\s+/, "").length);
+        if (start < to) add(start, to, deco[kind]);
+      },
+    });
+    return CM.ViewPlugin.fromClass(
+      function (view) {
+        this.decorations = matcher.createDeco(view);
+        this.update = function (u) {
+          this.decorations = matcher.updateDeco(u, this.decorations);
+        };
+      },
+      {
+        decorations: function (plugin) {
+          return plugin.decorations;
+        },
+      }
+    );
+  }
+
+  function editorEvents(CM) {
+    function hasType(event, type) {
+      return event.dataTransfer && Array.prototype.indexOf.call(event.dataTransfer.types, type) >= 0;
+    }
+    function ours(event) {
+      return hasType(event, "application/x-writer-component") || hasType(event, "application/x-writer-asset");
+    }
+    function posOf(view, event) {
+      var pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      return pos == null ? view.state.doc.length : pos;
+    }
+    function clearDrop(view) {
+      if (setDrop) view.dispatch({ effects: setDrop.of(null) });
+    }
+    return {
+      dragover: function (event, view) {
+        if (!ours(event)) return false;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        var at = hasType(event, "application/x-writer-component") ? insertionPoint(posOf(view, event), true) : posOf(view, event);
+        if (at !== ui.dropAt) {
+          ui.dropAt = at;
+          view.dispatch({ effects: setDrop.of(at) });
+        }
+        return true;
+      },
+      dragleave: function (event, view) {
+        if (event.relatedTarget && view.dom.contains(event.relatedTarget)) return false;
+        ui.dropAt = null;
+        clearDrop(view);
+        return false;
+      },
+      drop: function (event, view) {
+        var dt = event.dataTransfer;
+        ui.dropAt = null;
+        clearDrop(view);
+        if (!dt) return false;
+        var pos = posOf(view, event);
+        var comp = dt.getData("application/x-writer-component");
+        if (comp !== "" && NEEDS[+comp]) {
+          event.preventDefault();
+          insertNeed(NEEDS[+comp], insertionPoint(pos, true), true);
+          return true;
+        }
+        var asset = dt.getData("application/x-writer-asset");
+        if (asset) {
+          event.preventDefault();
+          var kind = asset.split("/")[0];
+          var name = asset.slice(kind.length + 1);
+          if (kind === "images") insertSnippet("![#{Describe what the image shows}](" + imageRel(name) + ")", insertionPoint(pos, true));
+          else {
+            view.dispatch({ changes: { from: pos, insert: assetMarkdown(kind, name) }, selection: { anchor: pos + assetMarkdown(kind, name).length } });
+            view.focus();
+          }
+          return true;
+        }
+        var file = dt.files && dt.files[0];
+        if (!file) return false;
+        event.preventDefault();
+        if (/\.(md|markdown|zip)$/i.test(file.name)) openFile(file);
+        else if (/^image\//.test(file.type)) {
+          addImageFile(file, function (name) {
+            insertSnippet("![#{Describe what the image shows}](" + imageRel(name) + ")", insertionPoint(Math.min(pos, state.body.length), true));
+          });
+        } else if (FILE_TYPES[extOf(file.name)]) {
+          addAttachment(file, function (name) {
+            var at = Math.min(pos, view.state.doc.length);
+            view.dispatch({ changes: { from: at, insert: assetMarkdown("files", name) } });
+          });
+        } else toast("Drop an image (PNG, JPEG, GIF, WebP or SVG), a file for readers to download (" + FILE_KINDS + "), or a .md or bundle to open.");
+        return true;
+      },
+      paste: function (event) {
+        var files = event.clipboardData && event.clipboardData.files;
+        if (!files || !files.length) return false;
+        if (/^image\//.test(files[0].type)) {
+          event.preventDefault();
+          addImageFile(files[0], function (name) {
+            replaceSelection(editorArea(), "![Describe what the image shows](" + imageRel(name) + ")");
+          });
+          return true;
+        }
+        if (FILE_TYPES[extOf(files[0].name)]) {
+          event.preventDefault();
+          addAttachment(files[0], function (name) {
+            insertFileLink(editorArea(), name);
+          });
+          return true;
+        }
+        return false;
+      },
+    };
+  }
+
+  /* ── Suggestions as the writer types ── */
+
+  // Whether pos is in a fenced code block: an odd number of fences above.
+  function inFence(doc, pos) {
+    var line = doc.lineAt(pos);
+    var fences = 0;
+    var fence = null;
+    for (var n = 1; n < line.number; n++) {
+      var m = /^\s*(`{3,}|~{3,})/.exec(doc.line(n).text);
+      if (!m) continue;
+      if (!fence) {
+        fence = m[1];
+        fences++;
+      } else if (m[1][0] === fence[0] && m[1].length >= fence.length && /^\s*(`{3,}|~{3,})\s*$/.test(doc.line(n).text)) {
+        fence = null;
+        fences++;
+      }
+    }
+    return fences % 2 === 1;
+  }
+
+  function inCode(st, pos) {
+    if (inFence(st.doc, pos)) return true;
+    var line = st.doc.lineAt(pos);
+    return ((line.text.slice(0, pos - line.from).match(/`/g) || []).length % 2) === 1;
+  }
+
+  // The id Python-Markdown's toc gives a heading.
+  function tocSlug(text) {
+    return text
+      .replace(/<[^>]+>/g, "")
+      .replace(/\{[^}]*\}\s*$/, "")
+      .normalize("NFKD")
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .toLowerCase()
+      .replace(/[-\s]+/g, "-");
+  }
+
+  function completionSources(CM) {
+    function rest(ctx) {
+      var line = ctx.state.doc.lineAt(ctx.pos);
+      return line.text.slice(ctx.pos - line.from);
+    }
+
+    // "/" at the start of a line: the components, by name or need.
+    function components(ctx) {
+      var m = ctx.matchBefore(/^\s*\/[\w -]*$/);
+      if (!m || inFence(ctx.state.doc, ctx.pos)) return null;
+      var slash = m.from + m.text.indexOf("/");
+      var q = m.text.slice(m.text.indexOf("/") + 1).trim().toLowerCase();
+      var options = NEEDS.filter(function (n) {
+        return !q || (n.name + " " + n.need + " " + n.type).toLowerCase().indexOf(q) >= 0;
+      }).map(function (n) {
+        return {
+          label: n.name,
+          detail: n.need,
+          type: "component",
+          boost: q && n.name.toLowerCase().indexOf(q) === 0 ? 1 : 0,
+          apply: function (view, completion, from, to) {
+            var doc = view.state.doc;
+            var line = doc.lineAt(from);
+            if (n.type === "image") {
+              view.dispatch({ changes: { from: from, to: to } });
+              insertNeed(n, line.from, false);
+              return;
+            }
+            var prevBlank = line.number === 1 || !doc.line(line.number - 1).text.trim();
+            var nextBlank = line.number === doc.lines || !doc.line(line.number + 1).text.trim();
+            var template = (prevBlank ? "" : "\n") + snippetFor(n) + (nextBlank ? "" : "\n");
+            addHints(template);
+            CM.snippet(template)(view, completion, from, to);
+          },
+        };
+      });
+      if (!options.length) return null;
+      return { from: slash, options: options, filter: false };
+    }
+
+    // After !!! or ???: the callout types.
+    function callouts(ctx) {
+      var m = ctx.matchBefore(/^\s*(?:!!!|\?\?\?\+?)\s+[\w-]*$/);
+      if (!m) return null;
+      var word = /[\w-]*$/.exec(m.text)[0];
+      var alone = !rest(ctx).trim();
+      var kinds = CALLOUTS.concat([{ id: "troubleshoot", label: "Troubleshooting entry", hint: "an error, its cause and its fix" }]);
+      return {
+        from: ctx.pos - word.length,
+        validFor: /^[\w-]*$/,
+        options: kinds.map(function (k) {
+          var body = k.id === "troubleshoot" ? TROUBLESHOOT_SNIPPET.replace(/^\?\?\? /, "") : k.id + ' "#{' + (CALLOUT_SAMPLES[k.id] || "Make the point") + '}"\n    #{What the reader needs to know.}';
+          return {
+            label: k.id,
+            detail: k.hint,
+            type: "keyword",
+            apply: alone
+              ? function (view, completion, from, to) {
+                  addHints(body);
+                  CM.snippet(body)(view, completion, from, to);
+                }
+              : k.id,
+          };
+        }),
+      };
+    }
+
+    // In === "…": the site's standard tab labels.
+    function tabs(ctx) {
+      var m = ctx.matchBefore(/^\s*===\+?\s+"[^"]*$/);
+      if (!m) return null;
+      var typed = /"([^"]*)$/.exec(m.text)[1];
+      var closed = rest(ctx)[0] === '"';
+      return {
+        from: ctx.pos - typed.length,
+        options: TAB_LABELS.map(function (label) {
+          return { label: label, type: "text", detail: "a standard label", apply: closed ? label : label + '"' };
+        }),
+      };
+    }
+
+    // After an opening ```: languages, for the colours.
+    function fences(ctx) {
+      var m = ctx.matchBefore(/^\s*(?:`{3,}|~{3,}) ?[\w+#-]*$/);
+      if (!m || inFence(ctx.state.doc, ctx.pos)) return null;
+      var word = /[\w+#-]*$/.exec(m.text)[0];
+      if (!word && !ctx.explicit) return null;
+      return {
+        from: ctx.pos - word.length,
+        validFor: /^[\w+#-]*$/,
+        options: LANGS.map(function (lang) {
+          return { label: lang, type: "type" };
+        }).concat([
+          { label: "mermaid", type: "type", detail: "a diagram" },
+          { label: "output", type: "type", detail: "command output", apply: "{ .text .output }" },
+        ]),
+      };
+    }
+
+    // In a link or image: pages, headings on this page, images and files.
+    function links(ctx) {
+      var m = ctx.matchBefore(/(!?)\[[^\]\n]*\]\([^)\s]*$/);
+      if (!m) return null;
+      var open = m.text.lastIndexOf("](");
+      var typed = m.text.slice(open + 2);
+      var image = m.text[0] === "!";
+      var q = typed.toLowerCase();
+      var options = [];
+      function offer(label, detail, type, boost) {
+        if (q && (label + " " + detail).toLowerCase().indexOf(q) < 0) return;
+        options.push({ label: label, detail: detail, type: type, boost: boost });
+      }
+      if (typed[0] === "#") {
+        lines(state.body).forEach(function (line) {
+          var hm = /^#{2,6}\s+(.+?)\s*$/.exec(line);
+          if (hm) offer("#" + tocSlug(hm[1]), hm[1].replace(/<[^>]+>|\{[^}]*\}/g, "").trim(), "anchor", 0);
+        });
+      } else {
+        Object.keys(state.images).sort().forEach(function (name) {
+          offer(imageRel(name), "Image on this page", "image", image ? 3 : 1);
+        });
+        Object.keys(state.files).sort().forEach(function (name) {
+          offer(fileRel(name), "File on this page", "file", image ? -1 : 1);
+        });
+        if (!image) {
+          data.pages.forEach(function (p) {
+            offer(relPath(folderPath(), p.src), p.title, "page", 0);
+          });
+        }
+        (data.files || []).forEach(function (path) {
+          var isImage = /^images\//.test(path);
+          if (image !== isImage && !(!image && /^files\//.test(path))) return;
+          offer(relPath(folderPath(), path), "On the site", isImage ? "image" : "file", -2);
+        });
+      }
+      if (!options.length) return null;
+      return { from: m.from + open + 2, options: options.slice(0, 200), filter: false };
+    }
+
+    // :material-…: the icons offered for cards.
+    function icons(ctx) {
+      var m = ctx.matchBefore(/:[a-z][\w-]*$/);
+      if (!m || m.text.length < 3) return null;
+      var before = ctx.state.sliceDoc(m.from - 1, m.from);
+      if (before && !/[\s(>]/.test(before)) return null;
+      var closed = rest(ctx)[0] === ":";
+      return {
+        from: m.from,
+        options: Object.keys(data.icons).map(function (name) {
+          var code = ":" + name.replace("/", "-") + ":";
+          return {
+            label: code,
+            type: "icon",
+            apply: closed ? code.slice(0, -1) : code,
+            info: function () {
+              return h("span", { class: "writer-card-icon writer-card-icon--info", html: data.icons[name] });
+            },
+          };
+        }),
+      };
+    }
+
+    // <…> in code: the standard placeholders and this page's Your values.
+    function placeholders(ctx) {
+      var m = ctx.matchBefore(/<[a-z0-9][\w.-]*$/i);
+      if (!m && !(ctx.explicit && (m = ctx.matchBefore(/<$/)))) return null;
+      if (!inCode(ctx.state, ctx.pos)) return null;
+      var seen = {};
+      var options = [];
+      PLACEHOLDERS.forEach(function (p) {
+        seen[p[0]] = true;
+        options.push({ label: p[0], detail: p[1].replace(/`/g, ""), type: "variable" });
+      });
+      readBlocks().forEach(function (b) {
+        if (b.type !== "values") return;
+        b.items.forEach(function (item) {
+          var name = cleanPlaceholder(item.name);
+          if (name && !seen[name]) {
+            seen[name] = true;
+            options.push({ label: name, detail: item.label.replace(/`/g, ""), type: "variable", boost: 1 });
+          }
+        });
+      });
+      var closed = rest(ctx)[0] === ">";
+      options.forEach(function (o) {
+        o.apply = closed ? o.label : o.label + ">";
+      });
+      return { from: m.from + 1, validFor: /^[\w.-]*$/, options: options };
+    }
+
+    // .md-button--…: the button styles.
+    function buttons(ctx) {
+      var m = ctx.matchBefore(/\.md-button--[\w-]*$/);
+      if (!m) return null;
+      return {
+        from: m.from + ".md-button--".length,
+        validFor: /^[\w-]*$/,
+        options: BUTTON_STYLES.filter(function (s) {
+          return s[0];
+        }).map(function (s) {
+          return { label: s[0], detail: s[1], type: "class" };
+        }),
+      };
+    }
+
+    // ++ctrl+…++: key names.
+    function keys(ctx) {
+      var m = ctx.matchBefore(/\+\+(?:[\w-]+\+)*[\w-]*$/);
+      if (!m) return null;
+      var word = /[\w-]*$/.exec(m.text)[0];
+      if (!word && !ctx.explicit) return null;
+      var seen = {};
+      return {
+        from: ctx.pos - word.length,
+        validFor: /^[\w-]*$/,
+        options: Object.keys(KEY_NAMES).filter(function (k) {
+          if (seen[KEY_NAMES[k]]) return false;
+          seen[KEY_NAMES[k]] = true;
+          return true;
+        }).map(function (k) {
+          return { label: k, detail: KEY_NAMES[k], type: "keyword" };
+        }),
+      };
+    }
+
+    return [components, callouts, tabs, fences, links, icons, placeholders, buttons, keys];
+  }
+
+  /* ── Checks in the editor ── */
+
+  function lintSource(view) {
+    if (view.state.doc.toString() !== state.body) return [];
+    var out = [];
+    runChecks().forEach(function (c) {
+      var range = checkRange(c);
+      if (!range) return;
+      out.push({ from: range.from, to: Math.max(range.to, range.from), severity: c.level === "warn" ? "warning" : "info", source: "Checks", message: c.text });
+    });
+    return out;
+  }
+
+  /* ── The component form ──
+     Opened on request for the component the cursor is in. It edits a copy
+     of the block; each change writes the block's Markdown back in place. */
+
+  function openForm(b) {
+    if (!ui.formBox) return;
+    var block = copy(b);
+    // An image this page brings: shown with its thumbnail and Replace.
+    if (block.type === "image" && block.src) {
+      var found = attachedAt(joinPath(folderPath(), block.src.trim()));
+      if (found && found.kind === "images") {
+        block.image = found.name;
+        block.src = "";
+      }
+    }
+    ui.form = { block: block, from: b.from, to: b.to, edited: false };
+    drawForm();
+    ui.formBox.hidden = false;
+    ui.root.classList.add("writer--form");
+    var first = ui.formBox.querySelector(".writer-form__body input:not([type=checkbox]), .writer-form__body textarea, .writer-form__body select");
+    if (first) first.focus({ preventScroll: true });
+  }
+
+  function drawForm() {
+    var f = ui.form;
+    if (!f) return;
+    var t = TYPES[f.block.type];
+    var box = ui.formBox;
+    var scroll = box.scrollTop;
+    box.innerHTML = "";
+    box.appendChild(
+      h("div", { class: "writer-form__head" }, [
+        h("span", { class: "writer-block__type" }, [icon(t.icon), h("span", { text: t.label })]),
+        h("span", { class: "writer-block__actions" }, [
+          iconButton("trash-can-outline", "Delete this component", false, function () {
+            var from = f.from;
+            var to = f.to;
+            var after = state.body.slice(to);
+            var gap = /^\n*/.exec(after)[0].length;
+            closeForm(false);
+            editBody([{ from: from, to: to + Math.min(gap, 2), insert: "" }]);
+            toast(t.label + " deleted. Ctrl+Z in the Markdown brings it back.");
+            goTo(Math.min(from, state.body.length));
+          }),
+          iconButton("close", "Close the form (Esc)", false, function () {
+            closeForm(true);
+          }),
+        ]),
+      ])
+    );
+    if (t.help) box.appendChild(h("div", { class: "writer-block__help", text: t.help }));
+    var body = h("div", { class: "writer-block__body writer-form__body" });
+    t.editor(f.block, body);
+    box.appendChild(body);
+    box.appendChild(h("p", { class: "writer-form__foot", text: "Changes here rewrite this component's Markdown as you type. Ctrl+Z in the Markdown undoes them." }));
+    box.scrollTop = scroll;
+  }
+
+  function closeForm(focusEditor) {
+    if (!ui.form) return;
+    var from = ui.form.from;
+    ui.form = null;
+    if (ui.formBox) {
+      ui.formBox.hidden = true;
+      ui.formBox.innerHTML = "";
+    }
+    if (ui.root) ui.root.classList.remove("writer--form");
+    if (focusEditor) goTo(Math.min(from, state.body.length));
+  }
+
+  function writeForm() {
+    var f = ui.form;
+    if (!f || !f.edited) return;
+    var text = TYPES[f.block.type].md(f.block);
+    if (state.body.slice(f.from, f.to) === text) return;
+    f.writing = true;
+    try {
+      editBody([{ from: f.from, to: f.to, insert: text }]);
+    } finally {
+      f.writing = false;
+    }
+    f.to = f.from + text.length;
+  }
+
+  // The Markdown changed in the editor while the form was open: keep up
+  // with where the block went, and redraw the form if it was edited.
+  function formFollow(u) {
+    var f = ui.form;
+    var touched = false;
+    u.changes.iterChangedRanges(function (fromA, toA) {
+      if (fromA <= f.to && toA >= f.from) touched = true;
+    });
+    f.from = u.changes.mapPos(f.from, 1);
+    f.to = Math.max(f.from, u.changes.mapPos(f.to, -1));
+    if (!touched) return;
+    var b = blockAt(f.from);
+    if (!b || b.type !== f.block.type) {
+      closeForm(false);
+      return;
+    }
+    ui.form = null;
+    var focus = document.activeElement;
+    openForm(b);
+    if (focus && focus !== document.body && !ui.formBox.contains(focus)) focus.focus({ preventScroll: true });
+  }
+
+  // Editors call this when a change needs the whole form drawn again.
+  function redrawBlock(b) {
+    if (ui.form && ui.form.block === b) drawForm();
+  }
+
+  /* ── The preview, following the cursor ── */
 
   function setActive(id) {
     if (ui.active === id) return;
@@ -4165,17 +5450,53 @@
     var part = ui.active && ui.preview.querySelector('[data-block="' + ui.active + '"]');
     if (!part) return;
     part.classList.add("writer-pv--active");
-    if (scroll && ui.panel === "preview") {
-      var box = ui.panels.preview;
-      var top = part.offsetTop - box.offsetTop;
+    if (scroll && ui.view === "split") {
+      var box = ui.previewPane;
+      var top = part.offsetTop;
       if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 60) box.scrollTo({ top: Math.max(0, top - 40), behavior: "smooth" });
     }
   }
 
-  /* ── Rendering the panels ── */
+  // Side by side: the preview scrolls with the Markdown.
+  function syncScroll() {
+    if (ui.view !== "split" || !ui.cm || ui.scrollQueued) return;
+    ui.scrollQueued = true;
+    requestAnimationFrame(function () {
+      ui.scrollQueued = false;
+      var view = ui.cm;
+      var scroller = view.scrollDOM;
+      var box = ui.previewPane;
+      if (scroller.scrollTop <= 2) {
+        box.scrollTop = 0;
+        return;
+      }
+      if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) {
+        box.scrollTop = box.scrollHeight;
+        return;
+      }
+      var top = scroller.scrollTop;
+      var pos = view.lineBlockAtHeight(top).from;
+      var blocks = readBlocks();
+      var b = null;
+      for (var i = 0; i < blocks.length; i++) {
+        if (blocks[i].to >= pos) {
+          b = blocks[i];
+          break;
+        }
+      }
+      var part = b && ui.preview.querySelector('[data-block="' + b.id + '"]');
+      if (!part) return;
+      var start = view.lineBlockAt(b.from).top;
+      var end = view.lineBlockAt(b.to).bottom;
+      var frac = end > start ? Math.min(1, Math.max(0, (top - start) / (end - start))) : 0;
+      box.scrollTop = part.offsetTop + frac * part.offsetHeight - 12;
+    });
+  }
+
+  /* ── Rendering ── */
 
   var timer = null;
-  function changed() {
+  function scheduleRender() {
     clearTimeout(timer);
     timer = setTimeout(function () {
       syncPaths();
@@ -4184,8 +5505,17 @@
     }, 180);
   }
 
+  // Called by every form control: the form's Markdown goes back into the
+  // page, then the preview and checks catch up.
+  function changed() {
+    writeForm();
+    scheduleRender();
+  }
+
   function render() {
     if (!ui.root || !ui.root.isConnected) return;
+    readBlocks();
+    updateTitleBar();
     drawAssets(false);
     var checks = runChecks();
     var warnings = checks.filter(function (c) {
@@ -4193,31 +5523,34 @@
     }).length;
     ui.checkCount.textContent = warnings ? String(warnings) : "";
     ui.checkCount.hidden = !warnings;
-    if (ui.panel === "preview") renderPreview();
-    else if (ui.panel === "markdown") renderSource();
-    else if (ui.panel === "checks") renderChecks(checks);
-    else if (ui.panel === "publish") renderPublish();
+    if (ui.side === "checks") renderChecks(checks);
+    renderPreview();
+    updateWelcome();
+    if (ui.publishBox && ui.publishBox.isConnected) renderPublish();
+    if (ui.cm && window.CM) window.CM.forceLinting(ui.cm);
   }
 
   function renderPreview() {
+    if (!ui.preview || ui.view === "markdown") return;
     tabSets = 0;
-    var box = ui.panels.preview;
+    var box = ui.previewPane;
     var scroll = box.scrollTop;
     var checked = [];
     ui.preview.querySelectorAll("input[type=radio]:checked").forEach(function (node) {
       checked.push(node.id);
     });
     var open = [];
-    ui.preview.querySelectorAll("details").forEach(function (node, i) {
+    ui.preview.querySelectorAll("details").forEach(function (node) {
       open.push(node.open);
     });
     var m = state.meta;
     var html = "<h1>" + (m.title.trim() ? inline(m.title) : '<span class="writer-ghost-text">Page title</span>') + "</h1>" + pageInfoHtml();
-    state.blocks.forEach(function (b) {
-      var t = TYPES[b.type];
-      var inner = isEmpty(b) ? '<div class="writer-ghost">' + esc(t.label) + ": fill it in, or it's left out of the file.</div>" : t.preview(b);
-      html += '<div class="writer-pv" data-block="' + b.id + '">' + inner + "</div>";
+    var blocks = readBlocks();
+    blocks.forEach(function (b) {
+      var inner = b.type === "text" ? renderPlain(b.md) : TYPES[b.type].preview(b);
+      html += '<div class="writer-pv writer-pv--' + b.type + '" data-block="' + b.id + '"' + (b.type === "text" ? "" : ' title="' + esc(TYPES[b.type].label) + (ui.view === "preview" ? ": click to edit" : "") + '"') + ">" + inner + "</div>";
     });
+    if (!blocks.length) html += '<div class="writer-ghost">Nothing here yet. What you write in the Markdown shows here, as it will on the site.</div>';
     ui.preview.innerHTML = html;
     checked.forEach(function (id) {
       var node = document.getElementById(id);
@@ -4232,66 +5565,21 @@
     box.scrollTop = scroll;
   }
 
-  function renderSource() {
-    var box = ui.panels.markdown;
-    box.innerHTML = "";
-    box.appendChild(
-      h("div", { class: "writer-panel__actions" }, [
-        h("code", { class: "writer-path", text: filePath() }),
-        button("Copy", "content-copy", "md-button--ghost md-button--sm", function () {
-          copyText(toMarkdown(), "Markdown copied.");
-        }),
-        button("Download .md only", "download", "md-button--ghost md-button--sm", download),
-        button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm", downloadBundle),
-      ])
-    );
-    box.appendChild(h("pre", { class: "writer-source language-markdown" }, [h("code", { text: toMarkdown() })]));
-  }
+  /* ── Add to site ── */
 
-  function renderChecks(checks) {
-    var box = ui.panels.checks;
-    box.innerHTML = "";
-    var list = h("ul", { class: "writer-checks" });
-    if (!checks.length) list.appendChild(h("li", { class: "writer-checks__item writer-checks__item--ok" }, [icon("check-circle-outline"), h("span", { text: "Nothing to fix that can be checked automatically." })]));
-    checks.forEach(function (c) {
-      var item = h("li", { class: "writer-checks__item writer-checks__item--" + c.level }, [icon(c.level === "warn" ? "alert-outline" : "information-outline"), h("span", { text: c.text })]);
-      if (c.id) {
-        item.appendChild(
-          h("button", {
-            type: "button",
-            class: "writer-link-btn",
-            text: "Show",
-            onclick: function () {
-              var card = ui.blocks.querySelector('[data-block="' + c.id + '"]');
-              if (!card) return;
-              card.scrollIntoView({ block: "center", behavior: "smooth" });
-              var first = card.querySelector("input, textarea, select");
-              if (first) first.focus({ preventScroll: true });
-            },
-          })
-        );
-      }
-      list.appendChild(item);
+  function openPublish() {
+    ui.publishBox = h("div", { class: "writer-panel writer-panel--publish" });
+    var node = dialog("Add to site", [ui.publishBox]);
+    node.classList.add("writer-dialog--wide", "writer-dialog--publish");
+    node.addEventListener("close", function () {
+      ui.publishBox = null;
     });
-    box.appendChild(list);
-    box.appendChild(h("p", { class: "writer-panel__lead", text: "Also check by eye before you publish:" }));
-    box.appendChild(
-      h(
-        "ul",
-        { class: "writer-checks writer-checks--manual" },
-        [
-          "Read the page skipping every box, badge and button. It still makes sense.",
-          "No subscription IDs, account IDs, tenant names or email addresses in screenshots or examples.",
-          "The last reviewed date is from a real run-through, not a typo fix.",
-        ].map(function (text) {
-          return h("li", { class: "writer-checks__item" }, [icon("check-circle-outline"), h("span", { text: text })]);
-        })
-      )
-    );
+    renderPublish();
   }
 
   function renderPublish() {
-    var box = ui.panels.publish;
+    var box = ui.publishBox;
+    if (!box) return;
     var m = state.meta;
     var repo = data.repo || {};
     var cfg = data.bundle || {};
@@ -4459,7 +5747,8 @@
     var website = update
       ? '<div class="steps"><ol>' +
         "<li><p><strong>Open the page's file.</strong> " + (configured ? '<a href="' + esc(fileLink) + '" target="_blank" rel="noopener">Open ' + esc(docsDir + name) + " in Azure DevOps</a>." : "In Azure DevOps, go to " + uiPath(["Repos", "Files"]) + " and open <code>" + esc(docsDir + name) + "</code>.") + "</p></li>" +
-        "<li><p><strong>Replace its text.</strong> Select <strong>Edit</strong>, select all the text, and paste the Markdown from the <em>Markdown</em> tab here (its <strong>Copy</strong> button copies it).</p></li>" +
+        "<li><p><strong>Replace its text.</strong> Select <strong>Edit</strong>, select all the text, and paste this page's Markdown: " +
+          '<button type="button" class="md-button md-button--ghost md-button--sm" data-copy-md>' + iconHtml("content-copy") + "<span>Copy the Markdown</span></button> copies the whole file.</p></li>" +
         "<li><p><strong>Commit to a new branch.</strong> Select <strong>Commit</strong>. Under <strong>Branch name</strong>, type <code>" + esc(work) + "</code>, keep <strong>Create a pull request</strong> ticked, and commit.</p></li>" +
         assetStep +
         "<li><p><strong>Create the pull request</strong> and ask for a review. Once it's merged, the next build publishes the change.</p></li></ol></div>"
@@ -4498,6 +5787,11 @@
     });
     box.querySelectorAll("[data-bundle]").forEach(function (btn) {
       btn.addEventListener("click", downloadBundle);
+    });
+    box.querySelectorAll("[data-copy-md]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        copyText(toMarkdown(), "Markdown copied.");
+      });
     });
     box.querySelectorAll("[data-download]").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -4562,9 +5856,7 @@
     offer(new Blob([toMarkdown()], { type: "text/markdown;charset=utf-8" }), fileName());
     var md = toMarkdown();
     var assets = usedAssets("images", md).length + usedAssets("files", md).length;
-    toast("Downloaded " + fileName() + "." + (assets ? " It doesn't include the page's " + plural(assets, "image or file", "images and files") + ": download each from Add to site, or the bundle instead." : " Add to site says where it goes."), ui.panel === "publish" ? null : "Add to site", function () {
-      showPanel("publish");
-    });
+    toast("Downloaded " + fileName() + "." + (assets ? " It doesn't include the page's " + plural(assets, "image or file", "images and files") + ": download each from Add to site, or the bundle instead." : " Add to site says where it goes."), ui.publishBox ? null : "Add to site", openPublish);
   }
 
   function offer(blob, name) {
@@ -4606,7 +5898,7 @@
   /* ── Saving the draft in this browser ── */
 
   function save() {
-    var ok = write(DRAFT_KEY, JSON.stringify({ meta: state.meta, blocks: state.blocks }));
+    var ok = write(DRAFT_KEY, JSON.stringify({ meta: state.meta, body: state.body }));
     ui.saveFailed = !ok;
     updateStatus();
   }
@@ -4614,17 +5906,25 @@
   function loadDraft() {
     try {
       var draft = JSON.parse(read(DRAFT_KEY) || "null");
-      if (!draft || !draft.meta || !Array.isArray(draft.blocks)) return null;
-      var blocks = draft.blocks.filter(function (b) {
-        return b && TYPES[b.type];
-      });
-      blocks.forEach(function (b) {
-        var n = parseInt(String(b.id).slice(1), 10);
-        if (n >= nextId) nextId = n + 1;
-      });
+      if (!draft || !draft.meta) return null;
+      state = newState(Object.assign(emptyMeta(), draft.meta), "");
       // Images and files come from IndexedDB afterwards: loadAssets().
-      return { meta: Object.assign(emptyMeta(), draft.meta), blocks: blocks, images: {}, files: {}, assetsLoaded: false, assetsSaved: true };
+      state.assetsLoaded = false;
+      if (typeof draft.body === "string") state.body = lines(draft.body).join("\n");
+      else if (Array.isArray(draft.blocks)) {
+        // A draft from before the Markdown editor: a list of blocks.
+        state.body = draft.blocks
+          .filter(function (b) {
+            return b && TYPES[b.type] && !isEmpty(b);
+          })
+          .map(function (b) {
+            return TYPES[b.type].md(b);
+          })
+          .join("\n\n");
+      } else state = null;
+      return state;
     } catch (e) {
+      state = null;
       return null;
     }
   }

@@ -2,3 +2,4 @@
 /site
 /site-staging
 __pycache__/
+node_modules/

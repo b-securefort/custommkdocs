@@ -20,6 +20,7 @@ hooks/
   front_matter.py                  # resolves and checks front matter links, images, icons
   writer.py                        # the site's folders, pages and settings, for the Write page
 tools/ingest_bundle.py             # checks a Write page bundle and puts its files in docs/
+tools/codemirror/                  # builds the Write page's editor: npm install && npm run build
 pipelines/ingest-bundle.yml        # Azure DevOps: bundle in S3 → ingest → pull request
 tests/                             # python -m unittest discover tests
 overrides/
