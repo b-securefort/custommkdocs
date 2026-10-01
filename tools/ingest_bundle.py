@@ -11,7 +11,8 @@ it uses. The manifest says where each one goes:
       "created": "2026-09-30T10:15:00Z",
       "author": "optional",
       "mode": "create",                     # or "update"
-      "page": {"src": "page.md", "target": "docs/<folder>/<slug>.md", "sha256": "optional"},
+      "page": {"src": "page.md", "target": "docs/<folder>/<slug>.md", "sha256": "optional",
+               "base_sha256": "optional"},
       "assets": [
         {"src": "images/step1.png", "target": "docs/images/<folder>/<slug>/step1.png", "sha256": "..."},
         {"src": "files/template.json", "target": "docs/files/<folder>/<slug>/template.json", "sha256": "..."}
@@ -30,7 +31,10 @@ before anything is written, and a bundle is placed whole or not at all:
 - each asset matches its sha256, its size is within the limits below, and
   images and binary files start the way their type says (SVGs may not script);
 - "create" never overwrites; "update" only overwrites the page and its own
-  folders.
+  folders;
+- an "update" with base_sha256 (the page as the writer opened it) is refused
+  when the page in the repository is no longer that one: someone else changed,
+  moved or removed it since, and placing this bundle would undo their change.
 
 Exits 0 when the bundle was placed (or would be, with --dry-run), 1 when it
 was refused, with the reason on stderr. The Write page (javascripts/writer.js)
@@ -114,6 +118,7 @@ class Item:
 @dataclass
 class Result:
     mode: str
+    base: str | None
     title: str
     slug: str
     created: str
@@ -148,6 +153,13 @@ def check_path(path: object, what: str) -> list[str]:
         if not SEGMENT.match(part) or WINDOWS_RESERVED.match(part):
             raise BundleError(f"{what} {path!r}: names may only use letters, digits, '.', '-' and '_'")
     return parts
+
+
+def text_sha256(data: bytes) -> str:
+    """The sha256 of a page as the Write page hashes it: UTF-8, no byte
+    order mark, and LF line endings, whatever the checkout uses."""
+    text = data.decode("utf-8-sig", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def ext(path: str) -> str:
@@ -240,6 +252,7 @@ def load(bundle_path: Path, repo_root: Path) -> Result:
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise BundleError(f"manifest.json isn't valid JSON ({error})") from None
         mode, page_spec, asset_specs, created, author = check_manifest(manifest)
+        base = page_spec.get("base_sha256")
 
         # Where the page goes decides where its images and files go.
         page_src = check_path(page_spec["src"], "page src")
@@ -305,7 +318,7 @@ def load(bundle_path: Path, repo_root: Path) -> Result:
     for item in items[1:]:
         check_content(item)
 
-    result = Result(mode, page_title(markdown, slug), slug, created, author, items, notes)
+    result = Result(mode, base.lower() if base else None, page_title(markdown, slug), slug, created, author, items, notes)
     check_targets(result, repo_root, docs, own)
     return result
 
@@ -333,8 +346,9 @@ def check_manifest(manifest: object):
     page = manifest["page"]
     if not isinstance(page, dict) or "src" not in page or "target" not in page:
         raise BundleError("manifest page needs src and target")
-    if "sha256" in page and not (isinstance(page["sha256"], str) and SHA256.match(page["sha256"])):
-        raise BundleError("manifest page sha256 must be 64 hex characters")
+    for key in ("sha256", "base_sha256"):
+        if key in page and not (isinstance(page[key], str) and SHA256.match(page[key])):
+            raise BundleError(f"manifest page {key} must be 64 hex characters")
     assets = manifest["assets"]
     if not isinstance(assets, list):
         raise BundleError("manifest assets must be a list")
@@ -382,7 +396,19 @@ def check_targets(result: Result, repo_root: Path, docs: Path, own: str) -> None
             raise BundleError(f"{target} already exists and isn't this page's own")
     result.replaced = clashes
     if result.mode == "update":
-        if not (repo_root / result.page.target).exists():
+        page = repo_root / result.page.target
+        if result.base and not page.exists():
+            raise BundleError(
+                f"{result.page.target} isn't in the repository any more: someone moved or removed it "
+                "since you opened it. Open the page again on the Write page, or make this a new page."
+            )
+        if result.base and text_sha256(page.read_bytes()) != result.base:
+            raise BundleError(
+                f"{result.page.target} has changed since you opened it, and publishing this would undo "
+                "that change. Open the page again on the Write page to get the latest version, "
+                "make your change there, and publish again."
+            )
+        if not page.exists():
             result.notes.append(f"{result.page.target} didn't exist, so this adds it.")
         placed = {item.target for item in result.items}
         for folder in own_folders:

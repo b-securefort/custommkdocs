@@ -8,3 +8,7 @@ site_dir: site-staging
 
 extra:
   environment: staging
+  writer:
+    # The Publish button's API, once it's set up: see the top of
+    # tools/writer_api/lambda_function.py. Empty: writers publish by hand.
+    api: ""

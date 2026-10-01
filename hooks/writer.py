@@ -16,7 +16,9 @@ their text, so the JSON would be run as JavaScript and the element lost.
     repo      extra.writer in mkdocs.yml: the Azure DevOps repository the
               publish instructions point at
     bundle    extra.writer too: the S3 bucket bundles are uploaded to and the
-              pipeline that adds them to the repository (pipelines/ingest-bundle.yml)
+              pipeline that adds them to the repository (pipelines/ingest-bundle.yml),
+              and the publish API that does both for the writer
+              (tools/writer_api/lambda_function.py), where there is one
     sources   whether the site publishes its pages' Markdown (below)
 
 So that any page can be opened on the Write page and changed there, the
@@ -183,7 +185,8 @@ def on_page_context(context, page, config, nav):
     repo = {key: writer.get(key) or "" for key in ("organization", "project", "repository")}
     repo["branch"] = writer.get("branch") or "main"
     # An empty value leaves a placeholder the writer fills in a Your values box.
-    bundle = {key: str(writer.get(key) or "").strip() for key in ("bucket", "prefix", "region", "pipeline_id")}
+    bundle = {key: str(writer.get(key) or "").strip() for key in ("bucket", "prefix", "region", "pipeline_id", "api")}
+    bundle["api"] = bundle["api"].rstrip("/")
     bundle["prefix"] = bundle["prefix"].strip("/")
 
     assets = sorted(

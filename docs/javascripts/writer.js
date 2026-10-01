@@ -4097,6 +4097,8 @@
         if (author) manifest.author = author;
         manifest.mode = state.meta.mode === "update" ? "update" : "create";
         manifest.page = { src: "page.md", target: filePath(), sha256: hashes[0] };
+        var base = state.meta.base;
+        if (manifest.mode === "update" && base && base.path === filePath()) manifest.page.base_sha256 = base.sha256;
         manifest.assets = assets.map(function (asset, i) {
           return { src: asset.src, target: asset.target, sha256: hashes[i + 1] };
         });
@@ -4171,6 +4173,7 @@
         var id = takeDraft();
         state = newState(doc.meta, doc.body, id);
         state.meta.mode = manifest.mode === "update" ? "update" : "new";
+        if (/^[0-9a-f]{64}$/i.test(String(manifest.page.base_sha256 || ""))) state.meta.base = { path: manifest.page.target, sha256: manifest.page.base_sha256.toLowerCase() };
         placePage(target[1] || "", target[2]);
         var dirs = [];
         assets.forEach(function (asset) {
@@ -4460,6 +4463,9 @@
     if (cloudy && !m.applies_to.length) add("info", "This page runs cloud commands. Under Page settings, set which platforms it applies to.");
     if (m.applies_to.length && (!m.owner.trim() || !m.last_reviewed)) add("info", "Cloud pages name an owner and a last reviewed date (Page settings), so readers know how far to trust them.");
     if (m.visibility === "draft") add("info", "Draft: this page won't be published anywhere until you change Visibility.");
+    var opened = openedVisibility();
+    if (m.mode === "update" && m.visibility === "draft-prod" && opened && opened !== "draft-prod")
+      add("warn", "This page is on production, and Staging only takes it out of production's menu, search and sitemap the next time production is published. To change a live page, keep its Visibility (" + VISIBILITY_NAMES[opened] + "): production keeps the old version until then.");
     return out;
   }
 
@@ -4807,9 +4813,17 @@
         iconButton("download", "Download the .md on its own", false, download),
         iconButton("delete-sweep-outline", "Clear the page: title, text, settings, images and files (Undo brings it back)", false, clearPage),
         ui.focusButton,
-        button("Add to site", "source-pull", "md-button--ghost md-button--sm", openPublish),
-        button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm", downloadBundle),
-      ]),
+      ].concat(
+        publishApi()
+          ? [
+              iconButton("folder-zip-outline", "Download the bundle (.zip): the page with its images and files", false, downloadBundle),
+              (ui.publishButton = button("Publish", "source-pull", "md-button--primary md-button--sm", openPublish)),
+            ]
+          : [
+              button("Add to site", "source-pull", "md-button--ghost md-button--sm", openPublish),
+              button("Download bundle (.zip)", "folder-zip-outline", "md-button--primary md-button--sm", downloadBundle),
+            ]
+      )),
     ]);
 
     ui.title = h("input", {
@@ -4975,6 +4989,7 @@
     openSide(read(SIDE_KEY) == null ? "components" : read(SIDE_KEY));
     updateStatus();
     updateWelcome();
+    followPublish();
     loadScript(MARKED_SRC).then(function () {
       // Tables and ~~ as the site has them, but not GitHub's links made of
       // bare web addresses: the site doesn't make those (see pythonish()).
@@ -6294,6 +6309,7 @@
     var stem = source.name.replace(/\.(md|markdown)$/i, "");
     var adoTitle = "";
     text = lines(text).join("\n");
+    var opened = text;
     if (!source.site && C && C.looksLikeAdo(text)) {
       var res = C.fromAdo(text, { link: wikiLink });
       text = res.md;
@@ -6321,11 +6337,24 @@
     loadPage();
     // The page as it was opened, to compare with before it's published.
     state.meta.original = toMarkdown();
+    if (source.page) rememberBase("docs/" + source.page.src, opened);
     ui.welcomeDone = true;
     changed();
     var where = source.page ? " from docs/" + source.page.src + "." : adoTitle ? ". Choose the folder it goes in, under Page settings." : ". Check the folder it belongs in, under Page settings.";
     toast("Opened " + (source.site ? "“" + state.meta.title + "”" : source.name) + where + (notes.length ? " From the Azure DevOps wiki: " + notes.join("; ") + "." : "") + keptNote(was, id), source.page || adoTitle ? null : "Page settings", function () {
       openSide("page");
+    });
+  }
+
+  // The page's file as it was opened, hashed: the bundle sends it as
+  // base_sha256, and the ingest pipeline refuses the change if the file in
+  // the repository isn't that one any more (someone else changed it since).
+  function rememberBase(path, text) {
+    var id = state.id;
+    sha256(utf8(lines(text).join("\n"))).then(function (hash) {
+      if (state.id !== id) return;
+      state.meta.base = { path: path, sha256: hash };
+      save();
     });
   }
 
@@ -6411,6 +6440,7 @@
     drawAssets(true);
     updateTitleBar();
     updateWelcome();
+    followPublish();
   }
 
   function addHints(template) {
@@ -7949,7 +7979,8 @@
 
   function openPublish() {
     ui.publishBox = h("div", { class: "writer-panel writer-panel--publish" });
-    var node = dialog("Add to site", [ui.publishBox]);
+    var node = dialog(publishApi() ? "Publish" : "Add to site", [ui.publishBox]);
+    if (publishApi()) whoAmI();
     node.classList.add("writer-dialog--wide", "writer-dialog--publish");
     node.addEventListener("close", function () {
       ui.publishBox = null;
@@ -8016,7 +8047,8 @@
     if (!cfg.prefix) missing.push(["prefix", "Folder in that bucket, such as <code>incoming</code>"]);
     if (!cfg.region) missing.push(["region", "AWS Region, such as <code>eu-west-1</code>"]);
     if (!cfg.pipeline_id) missing.push(["pipeline-id", "The ingest pipeline's number (after <code>definitionId=</code> in its address)"]);
-    if (missing.length) {
+    // With the Publish button, the steps by hand are only a fallback.
+    if (missing.length && !publishApi()) {
       html +=
         '<div class="your-values"><ul>' +
         missing.map(function (v) {
@@ -8147,10 +8179,12 @@
         ["Terminal", terminal],
       ]);
 
-    html += tabsHtml([
-      ["Upload the bundle", upload],
-      ["Do it by hand", byHand],
-    ]);
+    html += tabsHtml(
+      (publishApi() ? [["Publish to staging", publishHtml()]] : []).concat([
+        ["Upload the bundle", upload],
+        ["Do it by hand", byHand],
+      ])
+    );
     box.appendChild(h("div", { class: "writer-publish", html: html }));
 
     if (hasAssets() && state.assetsSaved === false) box.appendChild(h("p", { class: "writer-note writer-note--warn", text: "This browser can't keep the images and files: download the bundle before you close the page." }));
@@ -8167,6 +8201,34 @@
     });
     box.querySelectorAll("[data-bundle]").forEach(function (btn) {
       btn.addEventListener("click", downloadBundle);
+    });
+    box.querySelectorAll("[data-publish]").forEach(function (btn) {
+      btn.addEventListener("click", publishToStaging);
+    });
+    box.querySelectorAll("[data-publish-check]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var p = m.published;
+        p.stopped = p.expired = false;
+        p.message = "";
+        p.followFrom = Date.now();
+        ui.pollErrors = 0;
+        save();
+        refreshPublish();
+        pollSoon(state.id, 0);
+      });
+    });
+    box.querySelectorAll("[data-publish-reopen]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        openSitePage(m.published.path.replace(/^docs\//, ""), true);
+      });
+    });
+    box.querySelectorAll("[data-visibility]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        m.visibility = btn.getAttribute("data-visibility");
+        drawSetup();
+        changed();
+        renderPublish();
+      });
     });
     box.querySelectorAll("[data-copy-md]").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -8190,6 +8252,345 @@
     });
     if (window.docsComponents) window.docsComponents.mount();
     box.scrollTop = scroll;
+  }
+
+  /* ── Publish to staging, through the publish API
+     (tools/writer_api/lambda_function.py, extra.writer.api): it takes the
+     bundle straight to S3 and runs the ingest pipeline, whose pull request
+     merges itself, and the merge starts the staging pipeline. The draft
+     keeps how that's getting on in meta.published, so a reload picks it up:
+     { stage, at, path, mode, sig, pageSha, key, runId, runUrl, prUrl,
+       stagingUrl, message, failedStep, stopped } ── */
+
+  var PUBLISH_STEPS = ["Upload the bundle", "Check the page and build the site", "Merge into main", "Publish to staging", "Live on staging"];
+  // Which of those each stage the API reports is at.
+  var STAGE_STEP = { uploading: 0, queued: 1, checking: 1, merging: 2, deploying: 3, merged: 3, live: 4 };
+  // Stop asking how a run is getting on after this long.
+  var FOLLOW_FOR = 60 * 60 * 1000;
+  var VISIBILITY_NAMES = { listed: "Published, in the menu", unlisted: "Published, not in the menu", "draft-prod": "Staging only", draft: "Draft" };
+
+  function publishApi() {
+    return (data && data.bundle && data.bundle.api) || "";
+  }
+
+  // Still on its way: not live, failed or given up on.
+  function publishing(p) {
+    p = p === undefined ? state && state.meta.published : p;
+    return !!p && p.stage !== "failed" && p.stage !== "live" && p.stage !== "merged" && !p.stopped;
+  }
+
+  // The Visibility the page had when it was opened, from the site or a file.
+  var openedCache = { text: null, visibility: "" };
+  function openedVisibility() {
+    var text = state.meta.original || "";
+    if (openedCache.text !== text) openedCache = { text: text, visibility: text ? parseDocument(text).meta.visibility : "" };
+    return openedCache.visibility;
+  }
+
+  // The load balancer signs readers in; a sign-in that has run out comes
+  // back as a redirect to Entra ID (or a bare 401), not as the API's JSON.
+  function apiCall(method, path, body) {
+    var headers = { "X-Writer": "1" };
+    if (body) headers["Content-Type"] = "application/json";
+    return fetch(publishApi() + path, {
+      method: method,
+      headers: headers,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "same-origin",
+      redirect: "manual",
+      cache: "no-store",
+    }).then(function (res) {
+      if (res.type === "opaqueredirect" || res.status === 0) throw { expired: true };
+      return res
+        .json()
+        .catch(function () {
+          return {};
+        })
+        .then(function (out) {
+          if (res.status === 401 && !out.error) throw { expired: true };
+          if (!res.ok) throw new Error(out.error || res.status + " " + res.statusText);
+          return out;
+        });
+    });
+  }
+
+  function publishError(e) {
+    if (e && e.expired) return "Your sign-in to the site has run out. Reload the page (your draft is kept) and publish again.";
+    return String((e && e.message) || e).replace(/\.$/, "") + ".";
+  }
+
+  // Who the load balancer signed in, and whether they may publish.
+  function whoAmI() {
+    if (ui.me && !ui.me.error) return;
+    apiCall("GET", "/me").then(
+      function (me) {
+        ui.me = me;
+        refreshPublish();
+      },
+      function (e) {
+        ui.me = { error: publishError(e) };
+        refreshPublish();
+      }
+    );
+  }
+
+  // S3 takes a presigned POST as a form, with the file last.
+  function uploadBundle(up, zip, name) {
+    var form = new FormData();
+    Object.keys(up.fields || {}).forEach(function (k) {
+      form.append(k, up.fields[k]);
+    });
+    form.append("file", zip, name);
+    return fetch(up.url, { method: "POST", body: form }).then(
+      function (res) {
+        if (res.ok) return;
+        return res.text().then(function (xml) {
+          var code = /<Code>([^<]+)<\/Code>/.exec(xml);
+          throw new Error("S3 refused the upload (" + (code ? code[1] : res.status) + ")");
+        });
+      },
+      function () {
+        throw new Error("Couldn't reach S3 to upload the bundle. The bucket's CORS settings may not include this site");
+      }
+    );
+  }
+
+  function publishToStaging() {
+    var m = state.meta;
+    if (publishing()) return;
+    if (!hasContent()) return toast("Write something first: there's nothing to publish.");
+    if (!m.title.trim()) return toast("Give the page a title first.");
+    if (!state.assetsLoaded) return toast("Still loading this page's images and files. Try again in a moment.");
+    if (ui.me && (ui.me.error || ui.me.allowed === false)) return toast(ui.me.error || ui.me.email + " can't publish from here.");
+    syncPaths();
+    var md = toMarkdown();
+    if (bundleSize(md) > BUNDLE_MAX) return toast("The bundle is over the " + BUNDLE_MAX / MB + " MB the pipeline takes. Make screenshots smaller, or link to big files where they already live.");
+    var id = state.id;
+    var name = bundleName();
+    var p = { stage: "uploading", at: Date.now(), path: filePath(), mode: m.mode === "update" ? "update" : "new", sig: signature() };
+    m.published = p;
+    save();
+    refreshPublish();
+    Promise.all([buildBundle(), sha256(utf8(md))])
+      .then(function (made) {
+        p.pageSha = made[1];
+        return apiCall("POST", "/uploads", { name: name }).then(function (up) {
+          p.key = up.key;
+          return uploadBundle(up, made[0], name);
+        });
+      })
+      .then(function () {
+        p.uploaded = true;
+        return apiCall("POST", "/publishes", { key: p.key });
+      })
+      .then(
+        function (run) {
+          p.stage = "queued";
+          p.runId = run.runId;
+          p.runUrl = run.runUrl;
+          storePublished(id, p);
+          pollSoon(id, 3000);
+        },
+        function (e) {
+          p.stage = "failed";
+          p.failedStep = p.uploaded ? 1 : 0;
+          p.message = publishError(e);
+          storePublished(id, p);
+          if (state.id === id) toast("Couldn't publish: " + p.message, ui.publishBox ? null : "Details", openPublish);
+        }
+      );
+  }
+
+  // p belongs to draft id, which may not be the one showing any more.
+  function storePublished(id, p) {
+    if (state.id === id) {
+      state.meta.published = p;
+      save();
+      refreshPublish();
+      return;
+    }
+    var other = loadDraft(id);
+    if (other) {
+      other.meta.published = p;
+      write(DRAFT_PREFIX + id, draftJson(other));
+    }
+  }
+
+  // When a draft is shown: carry on following its publish, if it has one.
+  function followPublish() {
+    if (!ui.root) return;
+    clearTimeout(ui.pollTimer);
+    refreshPublish();
+    var p = state && state.meta.published;
+    if (p && p.expired) {
+      p.stopped = p.expired = false;
+      p.message = "";
+      p.followFrom = Date.now();
+    }
+    if (!publishApi() || !p || !p.runId || !publishing(p)) return;
+    pollSoon(state.id, 500);
+  }
+
+  function pollSoon(id, delay) {
+    clearTimeout(ui.pollTimer);
+    ui.pollTimer = setTimeout(function () {
+      pollOnce(id);
+    }, delay);
+  }
+
+  function pollOnce(id) {
+    // Another draft is showing: this one carries on when it's shown again.
+    if (!state || state.id !== id) return;
+    var p = state.meta.published;
+    if (!p || !p.runId || !publishing(p)) return;
+    if (Date.now() - (p.followFrom || p.at) > FOLLOW_FOR) {
+      p.stopped = true;
+      p.message = "Stopped checking on it after an hour.";
+      save();
+      refreshPublish();
+      return;
+    }
+    apiCall("GET", "/runs/" + encodeURIComponent(p.runId)).then(
+      function (run) {
+        if (state.id !== id || state.meta.published !== p) return;
+        ui.pollErrors = 0;
+        var before = JSON.stringify(p);
+        ["runUrl", "prUrl", "stagingUrl"].forEach(function (k) {
+          if (run[k]) p[k] = run[k];
+        });
+        p.message = run.message || "";
+        p.stage = STAGE_STEP[run.stage] != null || run.stage === "failed" ? run.stage : p.stage;
+        if (p.stage === "failed") p.failedStep = p.stagingUrl ? 3 : p.prUrl ? 2 : 1;
+        // Merged: main has the page as it was published, so a change made
+        // from here on is a change to that.
+        if ((STAGE_STEP[p.stage] >= 3 || p.failedStep === 3) && p.pageSha && !p.merged) {
+          p.merged = true;
+          state.meta.base = { path: p.path, sha256: p.pageSha };
+          state.meta.mode = "update";
+        }
+        if (JSON.stringify(p) !== before) {
+          save();
+          refreshPublish();
+          if (p.stage !== JSON.parse(before).stage) announcePublish(p);
+        }
+        if (publishing(p)) pollSoon(id, p.stage === "checking" || p.stage === "queued" ? 5000 : 8000);
+      },
+      function (e) {
+        if (state.id !== id || state.meta.published !== p) return;
+        ui.pollErrors = (ui.pollErrors || 0) + 1;
+        if ((e && e.expired) || ui.pollErrors >= 5) {
+          p.stopped = true;
+          // Signing in again is a reload, which carries on from here.
+          p.expired = !!(e && e.expired);
+          p.message = e && e.expired ? publishError(e) : "Couldn't get how it's going (" + publishError(e).replace(/\.$/, "") + ").";
+          save();
+          refreshPublish();
+          return;
+        }
+        pollSoon(id, 15000);
+      }
+    );
+  }
+
+  function announcePublish(p) {
+    if (p.stage === "live") {
+      toast("“" + (state.meta.title.trim() || "The page") + "” is live on staging.", state.meta.visibility === "draft" ? null : "Open it", function () {
+        window.open(siteUrl(p.path.replace(/^docs\//, "")), "_blank", "noopener");
+      });
+    } else if (p.stage === "merged") toast("Merged into main. Staging shows it once its pipeline has run.");
+    else if (p.stage === "failed") toast("Publishing didn't work: " + (p.message || "the pipeline failed."), ui.publishBox ? null : "Details", openPublish);
+  }
+
+  function refreshPublish() {
+    if (ui.publishButton) {
+      var busy = publishing();
+      ui.publishButton.classList.toggle("writer-busy", busy);
+      ui.publishButton.lastChild.textContent = busy ? "Publishing…" : "Publish";
+    }
+    if (ui.publishBox && ui.publishBox.isConnected) renderPublish();
+    updateStatus();
+  }
+
+  // The Publish to staging tab, in Publish (renderPublish).
+  function publishHtml() {
+    var m = state.meta;
+    var p = m.published;
+    var me = ui.me;
+    var busy = publishing(p);
+    var path = filePath();
+    var update = m.mode === "update";
+    var md = toMarkdown();
+    var images = usedAssets("images", md).length;
+    var files = usedAssets("files", md).length;
+    var out = "";
+
+    function note(text, warn, visibility, label) {
+      return (
+        '<div class="writer-note' + (warn ? " writer-note--warn" : "") + '"><p>' + text + "</p>" +
+        (visibility ? '<p><button type="button" class="md-button md-button--ghost md-button--sm" data-visibility="' + visibility + '">' + esc(label) + "</button></p>" : "") +
+        "</div>"
+      );
+    }
+
+    if (!me) out += '<p class="writer-note">Checking your sign-in…</p>';
+    else if (me.error) out += note(esc(me.error), true);
+    else if (!me.allowed) out += note(esc(me.email) + " can't publish from here yet. Ask for it to be added to the publish service's list of writers (WRITERS); until then, use Upload the bundle.", true);
+    else out += '<p class="writer-note">Publishing as <strong>' + esc(me.name) + "</strong> (" + esc(me.email) + ").</p>";
+
+    var contents = [images ? plural(images, "image") : "", files ? plural(files, "file") : ""].filter(Boolean).join(" and ");
+    out +=
+      "<p>" + (update ? "Changes" : "Adds") + " <code>" + esc(path) + "</code>" + (contents ? ", with its " + contents : "") +
+      ". Once the pipeline has checked the page and built the site with it, the change merges into main by itself, and staging shows it a few minutes later. " +
+      "Production gets it the next time someone runs the production pipeline.</p>";
+
+    // Staging only (draft: prod) holds a new page back from production. A
+    // live page keeps its Visibility: production keeps the old version
+    // until its pipeline runs, and Staging only would take it off there.
+    var opened = openedVisibility();
+    if (m.visibility === "draft") out += note("Visibility is <strong>Draft</strong>, so staging won't show this page either. To review it there, make it Staging only.", true, "draft-prod", "Make it Staging only");
+    else if (update && m.visibility === "draft-prod" && opened && opened !== "draft-prod")
+      out += note("This page is on production. <strong>Staging only</strong> would take it out of production's menu, search and sitemap the next time production is published. To change a live page, keep its Visibility: production keeps the old version until then.", true, opened, "Keep it " + VISIBILITY_NAMES[opened]);
+    else if (!update && m.visibility !== "draft-prod")
+      out += note("Production publishes everything on main, this page included, the next time someone runs it. If the page shouldn't reach readers until it's been reviewed, make it <strong>Staging only</strong>, and change that when it's ready.", false, "draft-prod", "Make it Staging only");
+    else if (!update) out += note("<strong>Staging only</strong>: production leaves this page out. When it's ready for readers, change Visibility under Page settings and publish again.");
+
+    var again = p && !busy && p.stage !== "failed" && p.path === path;
+    var blocked = busy || (me && (me.error || !me.allowed));
+    out +=
+      '<p><button type="button" class="md-button md-button--primary' + (busy ? " writer-busy" : "") + '" data-publish' + (blocked ? " disabled" : "") + ">" +
+      iconHtml("source-pull") + "<span>" + (busy ? "Publishing…" : again ? "Publish again" : "Publish to staging") + "</span></button></p>";
+    if (again && p.sig !== signature()) out += '<p class="writer-note writer-note--warn">You\'ve changed the page since you published it. Publish again to send the changes.</p>';
+    if (p) out += publishProgressHtml(p);
+    return out;
+  }
+
+  function publishProgressHtml(p) {
+    var at = p.stage === "failed" ? p.failedStep || 0 : STAGE_STEP[p.stage] || 0;
+    var links = [
+      null,
+      p.runUrl ? ["the run", p.runUrl] : null,
+      p.prUrl ? ["the pull request", p.prUrl] : null,
+      p.stagingUrl ? ["the staging run", p.stagingUrl] : null,
+      p.stage === "live" && state.meta.visibility !== "draft" ? ["open the page", siteUrl(p.path.replace(/^docs\//, ""))] : null,
+    ];
+    var items = PUBLISH_STEPS.map(function (label, i) {
+      var kind = i < at || (i === at && p.stage === "live") ? "done" : i > at ? "todo" : p.stage === "failed" ? "failed" : p.stopped || p.stage === "merged" ? "waiting" : "current";
+      var mark = kind === "done" ? iconHtml("check") : kind === "failed" ? iconHtml("close") : kind === "current" ? '<span class="writer-spinner"></span>' : String(i + 1);
+      var said = { done: "done", failed: "failed", current: "in progress", waiting: "waiting", todo: "to come" }[kind];
+      var link = links[i] ? ' · <a href="' + esc(links[i][1]) + '" target="_blank" rel="noopener">' + links[i][0] + "</a>" : "";
+      var message = i === at && p.message ? '<span class="writer-pubstep__msg">' + esc(p.message) + "</span>" : "";
+      if (i === at && p.stage === "merged") message = '<span class="writer-pubstep__msg">Merged. Staging shows it once its pipeline has run, in a few minutes.</span>';
+      return (
+        '<li class="writer-pubstep writer-pubstep--' + kind + '"><span class="writer-pubstep__mark" aria-hidden="true">' + mark + "</span>" +
+        '<span class="writer-pubstep__text">' + label + '<span class="sr-only"> (' + said + ")</span>" + link + message + "</span></li>"
+      );
+    });
+    var extra = "";
+    if (p.stage === "failed" && p.mode === "update" && /changed since you opened it|conflicts with main|isn't in the repository any more/.test(p.message || ""))
+      extra += '<p class="writer-note"><button type="button" class="md-button md-button--ghost md-button--sm" data-publish-reopen>' + iconHtml("file-document-edit-outline") + "<span>Open the latest version</span></button> in a draft of its own; this one stays in Drafts and versions, to copy your change from.</p>";
+    if (p.stopped && p.runId) extra += '<p><button type="button" class="md-button md-button--ghost md-button--sm" data-publish-check>' + iconHtml("history") + "<span>Check again</span></button></p>";
+    if (p.stage === "live") extra += '<p class="writer-note">Production gets it the next time someone runs the production pipeline.</p>';
+    return '<div class="writer-pub"><p class="writer-pub__when">Published ' + esc(when(p.at)) + "</p><ol class=\"writer-pubsteps\">" + items.join("") + "</ol>" + extra + "</div>";
   }
 
   function iconHtml(name) {
@@ -8689,7 +9090,7 @@
       : assetsLost
         ? "Can't keep the images and files in this browser: download the bundle before you leave."
         : "";
-    ui.status.textContent = ui.status.title = warn;
+    ui.status.textContent = ui.status.title = warn || (publishApi() && publishing() ? "Publishing to staging…" : "");
     ui.status.classList.toggle("writer-status--warn", !!warn);
     updateFooter();
   }

@@ -150,6 +150,40 @@ class Bundles(unittest.TestCase):
         self.assertIn("replaces the one there", out)
         self.assertIn("kept   docs/images/security/rotate-key/retired.png", out)
 
+    def test_update_from_the_page_as_it_is(self):
+        # Opened from a Windows checkout: a byte order mark and \r\n, which
+        # the Write page hashes as plain UTF-8 with \n.
+        opened = "# Old\n\nText.\n"
+        (self.repo / "docs/security/rotate-key.md").write_bytes(b"\xef\xbb\xbf" + opened.replace("\n", "\r\n").encode())
+
+        def change(m):
+            m["page"]["base_sha256"] = sha(opened.encode()).upper()
+        code, out, err = self.run_cli(self.bundle(mode="update", change=change))
+        self.assertEqual(code, 0, err)
+        self.assertEqual((self.repo / "docs/security/rotate-key.md").read_bytes(), PAGE)
+
+    def test_update_after_someone_else_changed_it(self):
+        page = self.repo / "docs/security/rotate-key.md"
+        page.write_text("# Changed by someone else\n", encoding="utf-8")
+
+        def change(m):
+            m["page"]["base_sha256"] = sha(b"# Old\n")
+        code, out, err = self.run_cli(self.bundle(mode="update", change=change))
+        self.assertEqual(code, 1, out)
+        self.assertIn("has changed since you opened it", err)
+        self.assertEqual(page.read_text(encoding="utf-8"), "# Changed by someone else\n")
+        self.assertFalse((self.repo / "docs/images").exists())
+
+    def test_update_after_someone_removed_it(self):
+        def change(m):
+            m["page"]["base_sha256"] = sha(b"# Old\n")
+        self.assertRefused(self.bundle(mode="update", change=change), "isn't in the repository any more")
+
+    def test_bad_base_sha256(self):
+        def change(m):
+            m["page"]["base_sha256"] = "abc"
+        self.assertRefused(self.bundle(mode="update", change=change), "base_sha256 must be 64 hex")
+
     def test_entry_not_in_manifest(self):
         path = self.bundle(entries={"page.md": PAGE, "images/blade.png": PNG, "files/runbook.pdf": PDF, "files/extra.pdf": PDF})
         self.assertRefused(path, "doesn't list: files/extra.pdf")

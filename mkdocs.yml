@@ -171,6 +171,11 @@ extra:
     prefix: incoming   # the pipeline moves bundles on to processed/ or failed/
     region: ""         # such as eu-west-1
     pipeline_id: ""    # the number after definitionId= in the pipeline's address
+    # The publish API (tools/writer_api/lambda_function.py), such as
+    # /api/writer. With it, the Write page's Publish button uploads the
+    # bundle and runs the pipeline itself; without it, writers do both by
+    # hand. Set in mkdocsstaging.yml, where the Write page is.
+    api: ""
     # Publish each page's Markdown under _writer/src/, so any page can be
     # opened on the Write page and changed there (its pencil button, or Open).
     # Only where the Write page is published: with `draft: prod` on write.md,

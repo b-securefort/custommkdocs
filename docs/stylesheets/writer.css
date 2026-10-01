@@ -1729,6 +1729,139 @@
   text-decoration: underline;
 }
 
+/* Publish to staging: how the publish is getting on, step by step */
+.md-typeset .writer-pub {
+  margin-top: 0.8rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--base-700);
+  border-radius: 8px;
+  background: var(--base-950);
+}
+
+.md-typeset .writer-pub__when {
+  margin: 0 0 0.5rem;
+  color: var(--base-400);
+  font-size: 0.66rem;
+}
+
+.md-typeset .writer-pubsteps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset .writer-pubsteps > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0;
+  font-size: 0.7rem;
+}
+
+.writer-pubstep__mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 1px solid var(--base-600);
+  border-radius: 50%;
+  color: var(--base-400);
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.writer-pubstep__mark .writer-icon svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.writer-pubstep__text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.3rem;
+  min-width: 0;
+  padding-top: 0.1rem;
+}
+
+.writer-pubstep__msg {
+  flex-basis: 100%;
+  color: var(--base-300);
+  font-size: 0.66rem;
+}
+
+.writer-pubstep--todo .writer-pubstep__text {
+  color: var(--base-400);
+}
+
+.writer-pubstep--done .writer-pubstep__mark {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+
+.writer-pubstep--current .writer-pubstep__mark,
+.writer-pubstep--waiting .writer-pubstep__mark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.writer-pubstep--current .writer-pubstep__text,
+.writer-pubstep--waiting .writer-pubstep__text {
+  font-weight: 600;
+}
+
+.writer-pubstep--failed .writer-pubstep__mark {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.writer-pubstep--failed .writer-pubstep__msg {
+  color: var(--base-200);
+}
+
+.writer-spinner {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: writer-spin 0.9s linear infinite;
+}
+
+@keyframes writer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The spinner's arc still shows which step is under way, standing still. */
+[data-motion="off"] .writer-spinner {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .writer-spinner {
+    animation: none;
+  }
+}
+
+.md-button.writer-busy {
+  cursor: progress;
+}
+
+/* As components.css has .md-button--disabled. */
+.md-typeset .writer-publish .md-button:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* Add to site */
 .writer-files {
   display: flex;

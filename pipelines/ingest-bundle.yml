@@ -1,12 +1,14 @@
 # Ingest a page bundle from the Write page (docs/write.md).
 #
-# A writer downloads the bundle (.zip) from the Write page, uploads it to
+# The Write page's Publish button uploads the bundle (.zip) to
 # s3://<bucket>/incoming/ and runs this pipeline with the object key as
-# bundleKey. The pipeline downloads it, checks it and puts its files in place
-# with tools/ingest_bundle.py, builds the site with --strict, pushes a branch
-# and opens a pull request. Nothing is published until a person approves and
-# merges that pull request. The bundle then moves to processed/, or to failed/
-# if any step failed (the run's log says which and why).
+# bundleKey; without it, a writer does both by hand. The pipeline downloads
+# the bundle, checks it and puts its files in place with
+# tools/ingest_bundle.py, builds the site with --strict, pushes a branch and
+# opens a pull request that completes itself once main's policies pass. The
+# merge starts the staging pipeline; production waits until someone runs
+# the production pipeline. The bundle then moves to processed/, or to
+# failed/ if any step failed (the run's log says which and why).
 #
 # ── Setup, once ──────────────────────────────────────────────────────────────
 #
@@ -68,17 +70,22 @@
 #    its address) in mkdocs.yml under extra.writer.pipeline_id, with the same
 #    bucket, region and prefix as below, so the Write page links to it.
 #
-# ── Starting it automatically (not set up) ───────────────────────────────────
+# 5. Pull requests complete themselves once main's branch policies pass
+#    (autoComplete below), and the merge starts the staging pipeline. The
+#    review before production happens when someone runs the production
+#    pipeline. So main must not require a reviewer, or these pull requests
+#    wait for one: keep build validation, drop "Require a minimum number of
+#    reviewers" (or set autoComplete to false and merge by hand).
 #
-# Writers start runs by hand. To start one whenever a bundle arrives, add an
-# S3 event notification (ObjectCreated, prefix incoming/, suffix .zip) that
-# invokes a small Lambda. The Lambda queues this pipeline through the Azure
-# DevOps REST API, "Runs - Run Pipeline":
-#   POST https://dev.azure.com/<organization>/<project>/_apis/pipelines/<pipeline-id>/runs?api-version=7.1
-#   { "templateParameters": { "bundleKey": "<the object's key>" } }
-# with a PAT that has Build (Read & execute), kept in Secrets Manager. It
-# passes the same bundleKey a writer would type, so nothing below changes and
-# `trigger: none` stays.
+# ── Starting it from the Write page ──────────────────────────────────────────
+#
+# tools/writer_api/lambda_function.py, behind the staging site's load
+# balancer, starts this pipeline for the Write page's Publish button. It
+# passes the key of the bundle the writer uploaded, and the name and email
+# address the load balancer's sign-in vouched for as publisherName and
+# publisherEmail. It follows the run from there, and finds the pull request
+# by the pr-<id> tag the last step adds. That file says how to set it up.
+# Without it, writers upload bundles and start runs by hand, as before.
 
 trigger: none
 pr: none
@@ -87,17 +94,29 @@ parameters:
   - name: bundleKey
     displayName: Bundle key (the S3 object key the Write page shows, like incoming/security-rotate-key-20260930-1015.zip)
     type: string
+  # Who published, when the Write page started the run: the commit's author.
+  # Empty when a person starts it, and the commit is by the pipeline.
+  - name: publisherName
+    displayName: Published by (name; leave empty)
+    type: string
+    default: " "
+  - name: publisherEmail
+    displayName: Published by (email address; leave empty)
+    type: string
+    default: " "
 
 variables:
   # The AWS service connection's name (step 2 above). Read when the run is
   # queued, which is when Azure DevOps checks the pipeline may use it.
   awsServiceConnection: docs-bundles-aws
-  awsRegion: eu-west-1          # extra.writer.region in mkdocs.yml
+  awsRegion: eu-west-2          # extra.writer.region in mkdocs.yml
   bucket: my-docs-bundles       # extra.writer.bucket
   incomingPrefix: incoming/     # extra.writer.prefix, with a / at the end
   processedPrefix: processed/
   failedPrefix: failed/
   targetBranch: main
+  # Complete the pull request once main's policies pass (setup step 5).
+  autoComplete: true
   pythonVersion: "3.11"
 
 pool:
@@ -150,9 +169,16 @@ steps:
         echo "##vso[task.logissue type=error]Nothing was downloaded: check the key, and that the bundle is in s3://$BUCKET/$BUNDLE_FOLDER/."
         exit 1
       fi
-      python tools/ingest_bundle.py "$bundle" --repo-root . \
+      # The reason it's refused, as an error the Write page shows the writer.
+      # "##" becomes "#": the bundle's names mustn't make logging commands.
+      if ! python tools/ingest_bundle.py "$bundle" --repo-root . \
         --summary-out "$AGENT_TEMPDIRECTORY/summary.md" \
-        --result-out "$AGENT_TEMPDIRECTORY/result.json"
+        --result-out "$AGENT_TEMPDIRECTORY/result.json" 2> "$AGENT_TEMPDIRECTORY/refused.txt"; then
+        cat "$AGENT_TEMPDIRECTORY/refused.txt" >&2
+        reason="$(sed 's/^ingest_bundle: refused [^:]*: //' "$AGENT_TEMPDIRECTORY/refused.txt" | tr '\r\n' '  ' | sed 's/##*/#/g' | cut -c1-1000)"
+        echo "##vso[task.logissue type=error]The bundle was refused: $reason"
+        exit 1
+      fi
     displayName: Check the bundle and put its files in place
     env:
       BUNDLE_NAME: $(bundleName)
@@ -162,7 +188,14 @@ steps:
   - bash: |
       set -euo pipefail
       pip install --quiet -r requirements.txt
-      mkdocs build --strict
+      # Its warnings (a broken link, a missing image) as errors the Write
+      # page shows the writer.
+      if ! mkdocs build --strict 2>&1 | tee "$AGENT_TEMPDIRECTORY/build.log"; then
+        grep -E '^(WARNING|ERROR)' "$AGENT_TEMPDIRECTORY/build.log" | grep -v 'Aborted with' | head -5 | sed 's/##*/#/g' | while IFS= read -r line; do
+          echo "##vso[task.logissue type=error]The site doesn't build with the page in it: ${line#*-  }"
+        done
+        exit 1
+      fi
     displayName: Build the site with the page in it
     env:
       DISABLE_MKDOCS_2_WARNING: "true"
@@ -177,26 +210,43 @@ steps:
       title="$( [[ "$mode" == update ]] && echo "Update" || echo "Add" ) $(field title)"
       branch="ingest/$(field branch_slug)-$BUILD_ID"
 
+      # The publisher, when the Write page started the run, is the commit's
+      # author; the pipeline is always its committer.
       git config user.name "Docs bundle ingest"
       git config user.email "docs-bundle-ingest@noreply.invalid"
+      name="$(printf '%s' "$PUBLISHER_NAME" | tr -d '<>\000-\037' | sed 's/^ *//; s/ *$//' | cut -c1-100)"
+      email="$(printf '%s' "$PUBLISHER_EMAIL" | sed 's/^ *//; s/ *$//')"
+      author=()
+      by=""
+      if [[ "$email" =~ ^[A-Za-z0-9._%+\'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        author=(--author "${name:-$email} <$email>")
+        by="Published from the Write page by ${name:-$email} ($email)."
+      elif [[ -n "$email" ]]; then
+        echo "##vso[task.logissue type=warning]publisherEmail isn't an email address, so the commit is by the pipeline."
+      fi
+
       git switch --quiet -c "$branch"
       git add -A docs
       if git diff --cached --quiet; then
         echo "##vso[task.logissue type=error]The bundle changes nothing: $(field page) and its files are already like this on $TARGET_BRANCH."
         exit 1
       fi
-      git commit --quiet -m "$title" -m "From page bundle $BUNDLE_KEY, pipeline run $BUILD_ID."
+      git commit --quiet "${author[@]}" -m "$title" -m "From page bundle $BUNDLE_KEY, pipeline run $BUILD_ID."
       git push --quiet origin "HEAD:refs/heads/$branch"
 
       az extension add --name azure-devops --only-show-errors
       # Azure DevOps takes up to 4,000 characters of description.
-      description="$(head -c 3900 "$AGENT_TEMPDIRECTORY/summary.md")"
-      url="$(az repos pr create \
+      description="$( [[ -n "$by" ]] && printf '%s\n\n' "$by" )$(head -c 3700 "$AGENT_TEMPDIRECTORY/summary.md")"
+      pr="$(az repos pr create \
         --organization "$ORGANIZATION" --project "$PROJECT" --repository "$REPOSITORY" \
         --source-branch "$branch" --target-branch "$TARGET_BRANCH" \
         --title "$title" --description "$description" \
-        --query "join('', [repository.webUrl, '/pullrequest/', to_string(pullRequestId)])" --output tsv)"
-      echo "Opened $url"
+        --auto-complete "$AUTO_COMPLETE" --delete-source-branch true \
+        --query "[to_string(pullRequestId), join('', [repository.webUrl, '/pullrequest/', to_string(pullRequestId)])]" --output tsv | paste -sd ' ')"
+      read -r id url <<< "$pr"
+      # The Write page finds the pull request by this tag.
+      echo "##vso[build.addbuildtag]pr-$id"
+      echo "Opened $url$( [[ "$AUTO_COMPLETE" == true ]] && echo ", which completes itself once main's policies pass" )"
     displayName: Commit, push and open the pull request
     env:
       AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
@@ -205,7 +255,10 @@ steps:
       PROJECT: $(System.TeamProject)
       REPOSITORY: $(Build.Repository.Name)
       TARGET_BRANCH: $(targetBranch)
+      AUTO_COMPLETE: $(autoComplete)
       BUNDLE_KEY: ${{ parameters.bundleKey }}
+      PUBLISHER_NAME: ${{ parameters.publisherName }}
+      PUBLISHER_EMAIL: ${{ parameters.publisherEmail }}
 
   - task: AWSCLI@1
     displayName: Move the bundle to processed/
