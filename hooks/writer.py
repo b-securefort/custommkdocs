@@ -20,6 +20,8 @@ their text, so the JSON would be run as JavaScript and the element lost.
               and the publish API that does both for the writer
               (tools/writer_api/lambda_function.py), where there is one
     sources   whether the site publishes its pages' Markdown (below)
+    glossary  the terms in the files pymdownx.snippets appends to every page
+              (includes/abbreviations.md), so the preview shows their tooltips
 
 So that any page can be opened on the Write page and changed there, the
 build also copies each published page's Markdown to _writer/src/<path in
@@ -38,6 +40,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 from urllib.parse import quote
 
 from mkdocs.structure.files import InclusionLevel
@@ -97,7 +100,7 @@ UI_ICONS = [
     "file-multiple-outline", "history", "format-list-text", "help-circle-outline", "crop",
     "image-edit-outline", "web", "microsoft-azure-devops", "content-paste", "file-document-edit-outline",
     "chevron-down", "rectangle-outline", "blur", "file-compare", "console-line", "backup-restore",
-    "check", "folder-open-outline", "menu-down", "arrow-collapse-vertical",
+    "check", "folder-open-outline", "menu-down", "arrow-collapse-vertical", "tag-text-outline",
 ]
 
 # Same names and icons as hooks/page_info.py.
@@ -135,6 +138,28 @@ def _icon(name, config):
                 return svg.read().replace("<svg ", '<svg aria-hidden="true" ', 1)
     log.warning(f"writer: icon '{name}' not found in the theme")
     return ""
+
+
+# A Markdown abbreviation, as the abbr extension reads it: *[TERM]: Meaning
+ABBREVIATION = re.compile(r"^\*\[([^\]]+)\][ ]?:[ ]*(.*)$", re.M)
+
+
+def _glossary(config):
+    """The abbreviations in the files appended to every page, by term."""
+    snippets = config.mdx_configs.get("pymdownx.snippets") or {}
+    bases = snippets.get("base_path") or ["."]
+    if isinstance(bases, str):
+        bases = [bases]
+    root = os.path.dirname(config.config_file_path)
+    terms = {}
+    for name in snippets.get("auto_append") or []:
+        for base in bases:
+            path = os.path.join(root, base, name)
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8") as source:
+                    terms.update(ABBREVIATION.findall(source.read()))
+                break
+    return terms
 
 
 def _sources(config):
@@ -208,6 +233,7 @@ def on_page_context(context, page, config, nav):
         "repo": repo,
         "bundle": bundle,
         "sources": _sources(config),
+        "glossary": _glossary(config),
     }
     payload = html.escape(json.dumps(data, separators=(",", ":")), quote=True)
     page.content = f'<div id="writer-data" hidden data-json="{payload}"></div>' + page.content

@@ -1377,6 +1377,81 @@
     return { label: "", colour: "", text: "" };
   }
 
+  def("anatomy", {
+    label: "Name anatomy",
+    icon: "tag-text-outline",
+    help: "A resource name split into its parts, each matched to what it means. Each part must be a piece of the name between - _ . / or :.",
+    create: function () {
+      return { name: "", items: [newPart(), newPart(), newPart()] };
+    },
+    empty: function (b) {
+      return !b.name.trim();
+    },
+    md: function (b) {
+      var out = ['<div class="anatomy" markdown>', "", "`" + b.name.trim() + "`", ""];
+      b.items.filter(function (x) {
+        return x.part.trim();
+      }).forEach(function (x) {
+        var part = x.part.trim();
+        var text = trimBlank(lines(x.text));
+        // Placeholders go in code, so <env> isn't read as an HTML tag.
+        out.push(x.code || /[<>]/.test(part) ? "`" + part + "`" : part);
+        out.push(":   " + (text[0] || ""));
+        if (text.length > 1) out.push(indent(text.slice(1).join("\n"), 4));
+        out.push("");
+      });
+      out.push("</div>");
+      return out.join("\n");
+    },
+    preview: function (b) {
+      var ls = lines(TYPES.anatomy.md(b));
+      return anatomyHtml("anatomy", ls.slice(1, -1)) || "";
+    },
+    editor: function (b, box) {
+      box.appendChild(field("Example name or pattern", input(b, "name", { placeholder: "<rg>-<geo>-<env>-01" }), "", "Split into parts at - _ . / and :. Use <angle brackets> or [square brackets] for a pattern."));
+      box.appendChild(
+        listEditor(b, "items", {
+          itemLabel: "Part",
+          addLabel: "Add a part",
+          min: 1,
+          create: newPart,
+          render: function (x, i, card) {
+            card.appendChild(field("Part, as it is in the name", input(x, "part", { placeholder: "<env>" })));
+            card.appendChild(mdField(x, "text", { label: "What it means", rows: 1, placeholder: "**Environment.** `dev`, `test` or `prod`." }));
+          },
+        })
+      );
+      box.appendChild(
+        h("div", { class: "writer-row writer-row--end" }, [
+          button("Add a part for each piece of the name", "magnify", "md-button--ghost md-button--sm", function () {
+            var have = b.items.map(function (x) {
+              return x.part.trim();
+            });
+            b.items = b.items.filter(function (x) {
+              return x.part.trim();
+            });
+            var added = 0;
+            b.name.split(/[-_./:]/).forEach(function (part) {
+              part = part.trim();
+              if (!part || have.indexOf(part) >= 0) return;
+              have.push(part);
+              b.items.push({ part: part, code: false, text: "" });
+              added++;
+            });
+            if (!b.items.length) b.items.push(newPart());
+            redrawBlock(b);
+            changed();
+            toast(added ? "Added " + plural(added, "part") + "." : "Every piece of the name already has a part.");
+          }),
+        ])
+      );
+    },
+  });
+
+  function newPart() {
+    return { part: "", code: false, text: "" };
+  }
+
   /* ── What the reader needs → which component (from Choosing components) ── */
 
   var NEEDS = [
@@ -1396,6 +1471,7 @@
     { need: "Copy something into a terminal or file", type: "code", name: "Code block", rather: "inline code" },
     { need: "Check a command worked", type: "output", name: "Command output", rather: "output pasted into the command's block" },
     { need: "Run commands with their own names and IDs", type: "values", name: "Your values", rather: "“Replace MY_RG with your resource group”" },
+    { need: "Build or decode a resource name", type: "anatomy", name: "Name anatomy", rather: "a paragraph listing the parts" },
     { need: "Fix an error they've hit", type: "troubleshoot", name: "Troubleshooting entry", rather: "a FAQ written as prose" },
     { need: "Compare options on the same points", type: "table", name: "Table", rather: "a paragraph for each option" },
     { need: "Check they're in the right place", type: "image", name: "Screenshot", rather: "a screenshot instead of the instructions" },
@@ -1485,6 +1561,26 @@
         ].join("\n");
       case "buttons":
         return "[#{Get started}](${}){ .md-button .md-button--primary }";
+      case "anatomy":
+        return [
+          '<div class="anatomy" markdown>',
+          "",
+          "`${<rg>}-${<geo>}-${<env>}-01`",
+          "",
+          "`${<rg>}`",
+          ":   **Type.** #{The resource type's short name: `rg` for a resource group.}",
+          "",
+          "`${<geo>}`",
+          ":   **Region.** #{Three letters, such as `weu` for West Europe.}",
+          "",
+          "`${<env>}`",
+          ":   **Environment.** #{`dev`, `test` or `prod`.}",
+          "",
+          "01",
+          ":   **Instance.** #{Two digits, starting at `01`.}",
+          "",
+          "</div>",
+        ].join("\n");
       case "timeline":
         return ['<div class="timeline" markdown>', "", "#{v2.0} { .green }", ":   #{**Released.** What changed.}", "", "#{v1.0} { .grey }", ":   #{First release.}", "", "</div>"].join("\n");
     }
@@ -1907,6 +2003,7 @@
     if (has("steps")) return parseSteps(inner);
     if (has("your-values")) return parseValues(inner);
     if (has("timeline")) return parseTimeline(inner, has("timeline--cards"), has("timeline--rainbow"));
+    if (has("anatomy") && classes.length === 1) return parseAnatomy(inner);
     if (has("grid") && has("cards")) return parseCards(inner, has("grid--2"));
     if (has("button-row")) {
       var text = trimBlank(inner).join(" ").trim();
@@ -1961,6 +2058,21 @@
       items: entries.map(function (entry) {
         var m = /^(.*?)\s*(?:\{\s*\.([\w-]+)\s*\})?\s*$/.exec(entry.term);
         return { label: m[1], colour: m[2] || "", text: entry.text };
+      }),
+    };
+  }
+
+  function parseAnatomy(inner) {
+    var ls = trimBlank(inner);
+    var name = /^`([^`]+)`\s*$/.exec(ls[0] || "");
+    var entries = name && readDefinitions(ls.slice(1));
+    if (!entries || !entries.length) return null;
+    return {
+      type: "anatomy",
+      name: name[1],
+      items: entries.map(function (entry) {
+        var code = /^`([^`]+)`$/.exec(entry.term.trim());
+        return { part: code ? code[1] : entry.term.trim(), code: !!code, text: entry.text };
       }),
     };
   }
@@ -2205,9 +2317,134 @@
   }
 
   function renderPlain(md) {
+    // Glossary definitions (*[TERM]: Meaning) aren't shown: the abbr
+    // extension takes them out, and glossary() uses them.
+    md = lines(md)
+      .filter(function (line) {
+        return !ABBREVIATION.test(line);
+      })
+      .join("\n");
     if (!md.trim()) return "";
     if (!window.marked) return "<p>" + esc(md).replace(/\n\n+/g, "</p><p>") + "</p>";
-    return finish(window.marked.parse(extensions(pythonish(md))));
+    // A name anatomy is drawn as hooks/components.py draws it; the rest goes
+    // to marked.
+    var ls = lines(md);
+    var out = "";
+    var buf = [];
+    function plain() {
+      if (buf.join("").trim()) out += finish(window.marked.parse(extensions(pythonish(buf.join("\n")))));
+      buf = [];
+    }
+    for (var i = 0; i < ls.length; i++) {
+      var m = RE.div.exec(ls[i]);
+      var r = m && m[1].split(/\s+/).indexOf("anatomy") >= 0 && readDiv(ls, i);
+      var html = r && anatomyHtml(m[1], r.inner);
+      if (html) {
+        plain();
+        out += html;
+        i = r.next - 1;
+      } else buf.push(ls[i]);
+    }
+    plain();
+    return out;
+  }
+
+  // Segment colours cycle through this many hues, as in hooks/components.py.
+  var ANATOMY_HUES = 6;
+
+  // A name in inline code, then a definition list with a term for each part:
+  // the name split into coloured parts, each keyed to its term.
+  function anatomyHtml(classes, inner) {
+    inner = trimBlank(inner);
+    var name = /^`([^`]+)`\s*$/.exec(inner[0] || "");
+    var items = name && readDefinitions(inner.slice(1));
+    if (!items || !items.length) return null;
+    var index = {};
+    var labels = {};
+    var dl = items
+      .map(function (x) {
+        var dt = inline(x.term.trim());
+        var dd = renderMarkdown(x.text);
+        var key = textOf(dt);
+        if (!(key in index)) index[key] = (Object.keys(index).length % ANATOMY_HUES) + 1;
+        var lead = /^\s*(?:<p>)?\s*<strong>([\s\S]*?)<\/strong>/.exec(dd);
+        if (lead && !(key in labels)) labels[key] = textOf(lead[1]).replace(/[.:]+$/, "");
+        return '<dt data-seg="' + index[key] + '">' + dt + '</dt><dd data-seg="' + index[key] + '">' + dd + "</dd>";
+      })
+      .join("");
+    var parts = name[1].split(/([-_./:])/).filter(Boolean).map(function (part) {
+      if (/^[-_./:]$/.test(part)) return '<span class="anatomy__sep">' + esc(part) + "</span>";
+      if (!(part in index)) return '<span class="anatomy__seg"><span class="anatomy__value">' + esc(part) + "</span></span>";
+      var label = labels[part] ? '<span class="anatomy__label" aria-hidden="true">' + esc(labels[part]) + "</span>" : "";
+      return '<span class="anatomy__seg" data-seg="' + index[part] + '"><span class="anatomy__value">' + esc(part) + "</span>" + label + "</span>";
+    });
+    return '<div class="' + esc(classes) + '"><p class="anatomy__name">' + parts.join("") + "</p><dl>" + dl + "</dl></div>";
+  }
+
+  function textOf(html) {
+    var box = document.createElement("div");
+    box.innerHTML = html;
+    return box.textContent.trim();
+  }
+
+  // A glossary definition, as the abbr extension reads it.
+  var ABBREVIATION = /^\*\[([^\]]+)\] ?:[ ]*(.*)$/;
+
+  // The site's glossary (includes/abbreviations.md, from hooks/writer.py)
+  // and the page's own definitions, as the abbr extension marks them up:
+  // whole words, case-sensitive, never in code.
+  function glossary(root) {
+    var terms = Object.assign({}, data.glossary);
+    lines(state.body).forEach(function (line) {
+      var m = ABBREVIATION.exec(line);
+      if (m) terms[m[1]] = m[2];
+    });
+    var keys = Object.keys(terms)
+      .filter(function (k) {
+        return k && terms[k];
+      })
+      .sort(function (a, b) {
+        return b.length - a.length;
+      });
+    if (!keys.length) return;
+    var re = new RegExp(
+      "\\b(?:" +
+        keys
+          .map(function (k) {
+            return k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          })
+          .join("|") +
+        ")\\b",
+      "g"
+    );
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        var up = node.parentElement;
+        return up && !up.closest("code, pre, kbd, abbr, svg, script, style, textarea, .mermaid, .page-info, .anatomy__name") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    var found = [];
+    while (walker.nextNode()) {
+      re.lastIndex = 0;
+      if (re.test(walker.currentNode.nodeValue)) found.push(walker.currentNode);
+    }
+    found.forEach(function (node) {
+      var text = node.nodeValue;
+      var frag = document.createDocumentFragment();
+      var last = 0;
+      var m;
+      re.lastIndex = 0;
+      while ((m = re.exec(text))) {
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var abbr = document.createElement("abbr");
+        abbr.title = terms[m[0]];
+        abbr.textContent = m[0];
+        frag.appendChild(abbr);
+        last = m.index + m[0].length;
+      }
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    });
   }
 
   // Where the site's build (Python-Markdown) reads Markdown differently from
@@ -2296,10 +2533,35 @@
     return siteUrl(path + parts[1]);
   }
 
+  // A tag with no attributes, such as <env>. Unless it's an HTML, SVG or
+  // MathML element it's a placeholder, shown as written (hooks/components.py,
+  // whose HTML_ELEMENTS this keeps in step with).
+  var BARE_TAG = /<(\/?)([A-Za-z][\w.-]*)>/g;
+  var HTML_ELEMENTS = {};
+  (
+    "a abbr address area article aside audio b base bdi bdo big blockquote body br button canvas caption " +
+    "center cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset " +
+    "figcaption figure font footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input " +
+    "ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option " +
+    "output p param picture pre progress q rp rt ruby s samp script search section select slot small " +
+    "source span strike strong style sub summary sup table tbody td template textarea tfoot th thead time " +
+    "title tr track tt u ul var video wbr " +
+    "svg g defs symbol use path rect circle ellipse line polyline polygon text tspan textpath " +
+    "lineargradient radialgradient stop clippath mask pattern marker filter foreignobject desc image switch " +
+    "math mi mo mn ms mrow msup msub msubsup mfrac msqrt mroot mtext mspace mtable mtr mtd semantics annotation"
+  )
+    .split(" ")
+    .forEach(function (name) {
+      HTML_ELEMENTS[name] = true;
+    });
+
   // attr_list, the ui-path hook, and a sanitiser: an opened file is shown
   // here, so it mustn't be able to run script in the page.
   function finish(html) {
     html = html
+      .replace(BARE_TAG, function (all, slash, name) {
+        return HTML_ELEMENTS[name.toLowerCase()] ? all : "&lt;" + slash + name + "&gt;";
+      })
       .replace(/(<img\b[^>]*?)\s*\/?>\s*\{\s*([^}]*)\}/g, function (all, tag, spec) {
         return tag + attrString(spec) + ">";
       })
@@ -7488,6 +7750,11 @@
         };
       });
       if (!options.length) return null;
+      // Unfiltered options keep their order, and boost is ignored: a name
+      // that starts with what was typed goes first here instead.
+      options.sort(function (a, b) {
+        return b.boost - a.boost;
+      });
       return { from: slash, options: options, filter: false };
     }
 
@@ -7969,6 +8236,7 @@
     ui.preview.querySelectorAll("details").forEach(function (node, i) {
       if (i < open.length) node.open = open[i];
     });
+    glossary(ui.preview);
     if (window.docsComponents) window.docsComponents.mount();
     renderMermaid(ui.preview);
     markActive(false);

@@ -129,9 +129,12 @@
   visibility: hidden;
 }
 
-/* Room under the footer so the button never sits on the next-page link. */
-.chat-is-on .md-footer-meta {
-  padding-bottom: 3.4rem;
+/* At the bottom of the page the button sits in the copyright strip, not on
+   the next-page link: the strip is just tall enough to hold it (bottom
+   1.2rem + 2.9rem + a little), and the text keeps clear of it on the right. */
+.chat-is-on .md-footer-meta__inner {
+  min-height: 4.5rem;
+  padding-right: 4.4rem;
 }
 
 /* ── Panel ── */

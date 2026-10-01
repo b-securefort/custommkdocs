@@ -3,6 +3,10 @@
 Writers type ordinary Markdown; this rewrites the HTML it produces, so the
 page needs no JavaScript for any of it and reads fine if a rule doesn't match.
 
+    <rg>-<geo>-<env>-01
+        -> shown as written: a word in angle brackets that isn't an HTML
+           element is a placeholder, not a tag the browser would hide
+
     **Home > Resource groups > Create**{ .ui-path }
         -> a click path, with chevrons between the parts
 
@@ -40,6 +44,26 @@ DT_DD = re.compile(r"<dt>(.*?)</dt>(\s*)<dd>(.*?)</dd>", re.S)
 LEAD_LABEL = re.compile(r"^\s*(?:<p>)?\s*<strong>(.*?)</strong>", re.S)
 NAME_SPLIT = re.compile(r"([-_./:])")
 
+# A tag with no attributes, such as <env> or </env>. Python-Markdown passes
+# these through as HTML, and a browser shows nothing for a tag it doesn't know.
+BARE_TAG = re.compile(r"<(/?)([A-Za-z][\w.-]*)>")
+# Skipped: what's in them isn't text on the page.
+SCRIPT_STYLE = re.compile(r"(<(script|style)\b.*?</\2>)", re.S | re.I)
+# HTML, SVG and MathML elements: any other bare tag is a placeholder.
+# Keep in step with HTML_ELEMENTS in javascripts/writer.js.
+HTML_ELEMENTS = frozenset("""
+    a abbr address area article aside audio b base bdi bdo big blockquote body br button canvas caption
+    center cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset
+    figcaption figure font footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input
+    ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option
+    output p param picture pre progress q rp rt ruby s samp script search section select slot small
+    source span strike strong style sub summary sup table tbody td template textarea tfoot th thead time
+    title tr track tt u ul var video wbr
+    svg g defs symbol use path rect circle ellipse line polyline polygon text tspan textpath
+    lineargradient radialgradient stop clippath mask pattern marker filter foreignobject desc image switch
+    math mi mo mn ms mrow msup msub msubsup mfrac msqrt mroot mtext mspace mtable mtr mtd semantics annotation
+""".split())
+
 OUTPUT_BLOCK = re.compile(r'<div class="([^"]*\boutput\b[^"]*\bhighlight\b[^"]*)"')
 
 DRAWIO_IMG = re.compile(r'<img\b[^>]*\bsrc="[^"]*\.drawio(?:\.svg|\.png)?"[^>]*>', re.I)
@@ -61,6 +85,23 @@ def _ui_path(match):
     sep = '<span class="ui-path__sep" aria-hidden="true"></span><span class="sr-only">, </span>'
     items = sep.join(f'<span class="ui-path__item">{part}</span>' for part in parts)
     return f'<strong class="{match.group(1)}">{items}</strong>'
+
+
+# ── Placeholders ──
+
+def _placeholder(match):
+    if match.group(2).lower() in HTML_ELEMENTS:
+        return match.group(0)
+    return f"&lt;{match.group(1)}{match.group(2)}&gt;"
+
+
+def _placeholders(html_content):
+    parts = SCRIPT_STYLE.split(html_content)
+    # split() gives text, script or style, its tag name, text, ...
+    return "".join(
+        BARE_TAG.sub(_placeholder, part) if i % 3 == 0 else part
+        for i, part in enumerate(parts)
+    )
 
 
 # ── Name anatomy ──
@@ -133,6 +174,8 @@ def _drawio(match):
 # Before the lightbox plugin (priority 0) wraps every image in a link.
 @event_priority(50)
 def on_page_content(html_content, page, config, files):
+    # Before the anatomy, so a part written as <env> matches its term.
+    html_content = _placeholders(html_content)
     html_content = UI_PATH.sub(_ui_path, html_content)
     html_content = ANATOMY.sub(lambda m: _anatomy(m, page), html_content)
     html_content = OUTPUT_BLOCK.sub(lambda m: f'<div class="{m.group(1)} no-copy"', html_content)
