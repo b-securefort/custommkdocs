@@ -416,6 +416,240 @@
   text-align: right;
 }
 
+.md-typeset .chart-legend__key--dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+}
+
+.md-typeset .chart-legend__item.is-static {
+  cursor: default;
+}
+
+.md-typeset .chart-legend__item.is-static:hover {
+  background: none;
+}
+
+/* Under a multi-ring donut: which ring is which. */
+.md-typeset .chart-card__caption {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--base-400);
+  font-size: 0.6rem;
+  text-align: center;
+}
+
+.md-typeset .chart-card__caption[hidden] {
+  display: none;
+}
+
+/* ── Heatmap ── */
+.md-typeset .chart-heat {
+  display: grid;
+  gap: 3px;
+  align-items: stretch;
+}
+
+.md-typeset .chart-heat__row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 0.5rem;
+  color: var(--base-400);
+  font-size: 0.62rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.md-typeset .chart-heat__col {
+  padding-top: 0.3rem;
+  overflow: hidden;
+  color: var(--base-500);
+  font-size: 0.58rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-typeset .chart-heat__cell {
+  display: grid;
+  place-items: center;
+  min-height: 2.1rem;
+  border-radius: 6px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  transition:
+    opacity 0.45s var(--ease-out),
+    transform 0.45s var(--ease-out),
+    box-shadow 0.15s;
+}
+
+.md-typeset .chart-heat__cell:hover {
+  box-shadow: 0 0 0 2px var(--base-900), 0 0 0 3.5px var(--base-300);
+}
+
+.md-typeset .chart-heat__cell.is-empty {
+  background: repeating-linear-gradient(135deg, var(--base-800) 0 4px, transparent 4px 8px);
+}
+
+.md-typeset .chart-heat__scale {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+  color: var(--base-500);
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-typeset .chart-heat__ramp {
+  width: 7rem;
+  height: 0.45rem;
+  border-radius: 999px;
+}
+
+/* ── Progress meters ── */
+.md-typeset .chart-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.md-typeset .chart-progress__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.md-typeset .chart-progress__name {
+  color: var(--base-200);
+  font-size: 0.66rem;
+  font-weight: 500;
+}
+
+.md-typeset .chart-progress__value {
+  color: var(--base-100);
+  font-size: 0.7rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.md-typeset .chart-progress__of {
+  color: var(--base-500);
+  font-weight: 500;
+}
+
+.md-typeset .chart-progress__track {
+  position: relative;
+  height: 0.5rem;
+  border-radius: 999px;
+}
+
+.md-typeset .chart-progress__fill {
+  width: var(--w);
+  height: 100%;
+  border-radius: inherit;
+  transition: width 1s var(--ease-out);
+  transition-delay: calc(var(--i, 0) * 80ms);
+}
+
+.md-typeset .chart-progress__item {
+  --i: 0;
+}
+
+.md-typeset .chart-progress__item .chart-progress__fill {
+  transition-delay: calc(var(--i) * 80ms);
+}
+
+/* The target: a tick through the track, in body ink. */
+.md-typeset .chart-progress__target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--base-200);
+  box-shadow: 0 0 0 1.5px var(--base-900);
+}
+
+.md-typeset .chart-progress__note {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--base-500);
+  font-size: 0.58rem;
+}
+
+/* ── Treemap ── */
+.md-typeset .chart-tree {
+  position: absolute;
+  inset: 0;
+}
+
+.md-typeset .chart-tree__tile {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0.05rem;
+  padding: 0.4rem 0.5rem;
+  overflow: hidden;
+  border-radius: 6px;
+  background-image: linear-gradient(160deg, rgb(255 255 255 / 0.14), transparent 55%);
+  cursor: default;
+  transition:
+    opacity 0.5s var(--ease-out),
+    transform 0.5s var(--ease-out),
+    filter 0.15s;
+}
+
+.md-typeset .chart-tree__tile:hover {
+  filter: brightness(1.08) saturate(1.05);
+}
+
+.md-typeset .chart-tree__name {
+  overflow: hidden;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-typeset .chart-tree__value {
+  overflow: hidden;
+  font-size: 0.6rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+/* First draw: cells and tiles settle in, meters fill from empty. The plot
+   gets .is-drawn a frame after they're added, and keeps it on redraws. */
+.md-typeset .chart-card__plot--html:not(.is-drawn) .chart-heat__cell,
+.md-typeset .chart-card__plot--html:not(.is-drawn) .chart-tree__tile {
+  opacity: 0;
+  transform: scale(calc(1 - 0.12 * var(--motion-scale)));
+}
+
+.md-typeset .chart-card__plot--html.is-drawn .chart-heat__cell {
+  transition-delay: calc(var(--i, 0) * 25ms), calc(var(--i, 0) * 25ms), 0s;
+}
+
+.md-typeset .chart-card__plot--html.is-drawn .chart-tree__tile {
+  transition-delay: calc(var(--i, 0) * 40ms), calc(var(--i, 0) * 40ms), 0s;
+}
+
+.md-typeset .chart-card__plot--html:not(.is-drawn) .chart-progress__fill {
+  width: 0;
+}
+
 /* ── Tooltip: the value leads, the series follows ── */
 .md-typeset .chart-tip {
   position: absolute;
@@ -488,6 +722,16 @@
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 2px;
+}
+
+.md-typeset .chart-tip__key--dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+}
+
+.md-typeset .chart-tip__key--none {
+  background: transparent;
 }
 
 .md-typeset .chart-tip__key--dash {

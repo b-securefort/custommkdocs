@@ -8,7 +8,7 @@ hide:
 
 Charts for Advisor findings, security posture, cost and sustainability. Each one is a few lines of JSON in the page, drawn in the active theme's colours and redrawn when you switch theme. Point at a chart for its figures, click a legend entry to hide a series, and use the :material-table: button for the figures as a table.
 
-The figures on this page are examples, not real data.
+Every type of chart, with the Markdown that draws it, is on [Chart types](chart-types.md). The figures on this page are examples, not real data.
 
 ``` chart
 {
@@ -170,6 +170,40 @@ The figures on this page are examples, not real data.
 }
 ```
 
+``` chart
+{
+  "type": "heatmap",
+  "title": "Open findings by subscription",
+  "subtitle": "By security area",
+  "valueLabel": "open findings",
+  "labels": ["Identity", "Network", "Data", "Compute", "Containers", "Key Vault"],
+  "rows": ["Production", "Shared services", "Development", "Test", "Sandbox"],
+  "data": [
+    [4, 9, 6, 12, 7, 2],
+    [7, 14, 3, 5, 2, 4],
+    [2, 6, 8, 15, 11, 1],
+    [1, 4, 5, 9, 6, 0],
+    [0, 3, 2, 18, 4, 1]
+  ]
+}
+```
+
+``` chart
+{
+  "type": "progress",
+  "title": "Regulatory compliance",
+  "subtitle": "Share of controls passing, against target",
+  "format": "percent",
+  "bands": [{ "to": 70, "color": "high" }, { "color": "accent" }],
+  "items": [
+    { "label": "ISO 27001:2022", "value": 91, "target": 90 },
+    { "label": "CIS Microsoft Azure Foundations 2.0", "value": 82, "target": 90 },
+    { "label": "CIS AWS Foundations 3.0", "value": 76, "target": 90 },
+    { "label": "PCI DSS 4.0", "value": 68, "target": 85, "note": "Audit in November" }
+  ]
+}
+```
+
 </div>
 
 ## Cost
@@ -208,9 +242,31 @@ The figures on this page are examples, not real data.
 
 ``` chart
 {
+  "type": "treemap",
+  "title": "Spend by resource group",
+  "subtitle": "September, by environment",
+  "format": "currency",
+  "items": [
+    { "label": "rg-payments-prod", "value": 9240, "group": "Production" },
+    { "label": "rg-data-prod", "value": 7810, "group": "Production" },
+    { "label": "rg-web-prod", "value": 4920, "group": "Production" },
+    { "label": "rg-payments-dev", "value": 3150, "group": "Non-production" },
+    { "label": "rg-data-dev", "value": 2840, "group": "Non-production" },
+    { "label": "rg-sandbox", "value": 1980, "group": "Non-production" },
+    { "label": "rg-test", "value": 1710, "group": "Non-production" },
+    { "label": "rg-shared-network", "value": 3700, "group": "Shared services" },
+    { "label": "rg-monitoring", "value": 1630, "group": "Shared services" },
+    { "label": "rg-identity", "value": 1260, "group": "Shared services" }
+  ]
+}
+```
+
+``` chart
+{
   "type": "bar",
   "title": "Spend by environment",
   "subtitle": "Last six months",
+  "wide": true,
   "stacked": true,
   "format": "currency",
   "labels": ["Apr", "May", "Jun", "Jul", "Aug", "Sep"],
@@ -219,6 +275,53 @@ The figures on this page are examples, not real data.
     { "name": "Non-production", "data": [8200, 9000, 9400, 9800, 9600, 8900] },
     { "name": "Shared services", "data": [3600, 3800, 3700, 3900, 3900, 3700] }
   ]
+}
+```
+
+``` chart
+{
+  "type": "waterfall",
+  "title": "What changed in spend",
+  "subtitle": "August to September",
+  "wide": true,
+  "format": "currency",
+  "good": "down",
+  "labels": ["August", "Virtual machines", "Reserved instances", "SQL Database", "Kubernetes", "Storage", "Networking"],
+  "data": [40700, -2140, -1850, 960, 620, 410, -460],
+  "end": "September"
+}
+```
+
+``` chart
+{
+  "type": "scatter",
+  "title": "Rightsizing",
+  "subtitle": "Virtual machines and databases: CPU against cost, last 30 days",
+  "wide": true,
+  "x": { "label": "Average CPU", "format": "percent", "max": 100 },
+  "y": { "label": "Monthly cost", "format": "currency" },
+  "size": { "label": "vCPUs" },
+  "region": { "x": [0, 20], "y": [500, null], "label": "Rightsizing candidates" },
+  "series": [
+    { "name": "Virtual machines", "color": "1", "data": [
+      { "name": "vm-sql-prod-01", "x": 62, "y": 1840, "size": 16 },
+      { "name": "vm-app-prod-01", "x": 8, "y": 1260, "size": 16 },
+      { "name": "vm-app-prod-02", "x": 11, "y": 980, "size": 8 },
+      { "name": "vm-batch-01", "x": 4, "y": 1520, "size": 32 },
+      { "name": "vm-web-prod-01", "x": 45, "y": 410, "size": 4 },
+      { "name": "vm-web-prod-02", "x": 38, "y": 390, "size": 4 },
+      { "name": "vm-ci-runner", "x": 71, "y": 620, "size": 8 },
+      { "name": "vm-reporting", "x": 14, "y": 720, "size": 8 },
+      { "name": "vm-cache-01", "x": 55, "y": 880, "size": 8 }
+    ] },
+    { "name": "Databases", "color": "2", "data": [
+      { "name": "sql-orders", "x": 18, "y": 1120, "size": 8 },
+      { "name": "sql-catalog", "x": 66, "y": 760, "size": 4 },
+      { "name": "rds-billing", "x": 9, "y": 940, "size": 8 },
+      { "name": "rds-auth", "x": 42, "y": 310, "size": 2 }
+    ] }
+  ],
+  "headline": { "value": 4780, "format": "currency", "label": "a month to save" }
 }
 ```
 
@@ -252,12 +355,14 @@ The figures on this page are examples, not real data.
 {
   "type": "donut",
   "title": "Emissions by service",
-  "subtitle": "September, tCO₂e",
+  "subtitle": "tCO₂e, September against August",
   "decimals": 1,
   "labels": ["Compute", "Storage", "Databases", "Networking", "Everything else"],
-  "series": [{ "name": "September", "data": [8.4, 4.1, 2.9, 2.3, 0.9] }],
-  "colors": ["1", "2", "3", "4", "muted"],
-  "centerLabel": "tCO₂e"
+  "series": [
+    { "name": "September", "data": [8.4, 4.1, 2.9, 2.3, 0.9] },
+    { "name": "August", "data": [8.6, 4.2, 3.0, 2.3, 0.9] }
+  ],
+  "colors": ["1", "2", "3", "4", "muted"]
 }
 ```
 
@@ -309,14 +414,19 @@ To put charts side by side, wrap them in `<div class="chart-grid" markdown>` …
 
 ### Types
 
-| `type`  | Use it for | Notes |
-| ------- | ---------- | ----- |
-| `kpi`   | The few numbers a page leads with | `tiles`, each with `label`, `value`, and optionally `delta` and a `trend` of past values |
-| `bar`   | Comparing amounts: by category, service, region or month | `horizontal` for long names; `stacked` for parts of a whole |
-| `line`  | Change over time | One series gets a shaded area; `"dashed": true` on a series for a forecast |
-| `donut` | Shares of one total, five parts or fewer | Fold the smallest parts into one "Everything else" |
-| `gauge` | One score against its maximum | `value`, `max`, and `bands` to colour it by how good it is |
-| `radar` | Scores across the same five or six areas | Two series at most: now and before |
+| `type` | Use it for |
+| ------ | ---------- |
+| [`kpi`](chart-types.md#stat-tiles) | The few numbers a page leads with, with their change and trend |
+| [`bar`](chart-types.md#bar-charts) | Comparing amounts: grouped, stacked, 100% stacked, diverging, or with a line |
+| [`line`](chart-types.md#line-charts) | Change over time: one line, several, or stacked areas |
+| [`donut`](chart-types.md#donuts) | Shares of one total, five parts or fewer; several rings to compare periods |
+| [`gauge`](chart-types.md#gauge) | One score against its maximum |
+| [`radar`](chart-types.md#radar) | Scores across the same five or six areas |
+| [`waterfall`](chart-types.md#waterfall) | How one total became another, change by change |
+| [`scatter`](chart-types.md#scatter-and-bubbles) | Two measures per item, such as usage against cost; add a size for bubbles |
+| [`heatmap`](chart-types.md#heatmap) | A grid of values: findings by subscription and area |
+| [`progress`](chart-types.md#progress) | Meters against targets: compliance per standard |
+| [`treemap`](chart-types.md#treemap) | Shares of a total with too many parts for a donut |
 
 A single number is a `kpi` tile, not a chart with one bar.
 
@@ -337,6 +447,8 @@ A single number is a `kpi` tile, not a chart with one bar.
 | `height` | The plot's height in pixels |
 | `note` | A line under the chart: the source, and when the figures are from |
 | `id`, `src` | For [live figures](#live-figures) |
+
+Options for one type only, such as `percent` for bars or `region` for a scatter chart, are with that type on [Chart types](chart-types.md).
 
 A delta is green when it moves the good way and red when it doesn't: set `"good": "down"` for costs, findings and emissions, where less is better.
 
