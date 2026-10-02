@@ -53,10 +53,13 @@ extra_css:
   - stylesheets/cloud.css
   - stylesheets/writer.css
   - stylesheets/chat.css
+  - stylesheets/charts.css
 
 extra_javascript:
   - javascripts/appearance.js
   - javascripts/components.js
+  # ``` chart fences; loads Chart.js only on pages that have one.
+  - javascripts/charts.js
   # Does nothing except on the Write page (docs/write.md).
   - javascripts/writer.js
   # The chat button on every page; does nothing unless extra.chat.enabled.
@@ -97,6 +100,10 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+        # Charts: JSON in a ``` chart fence, drawn by javascripts/charts.js.
+        - name: chart
+          class: chart
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true

@@ -1,0 +1,11 @@
+{
+  "name": "docs-charts-chartjs",
+  "private": true,
+  "description": "Copies Chart.js into docs/javascripts/vendor/ for the charts (javascripts/charts.js), which load it on pages with a chart. Run: npm install && npm run build.",
+  "scripts": {
+    "build": "node copy.js"
+  },
+  "dependencies": {
+    "chart.js": "4.5.1"
+  }
+}

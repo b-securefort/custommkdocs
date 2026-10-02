@@ -27,6 +27,7 @@ Every component on this site pulls the eye, and most of them move: cards, callou
 | Check a command worked                     | A [command output](../components/code-blocks.md#command-output) block | Output pasted into the command's block |
 | Fix an error they've hit                   | A [troubleshooting](../components/troubleshooting.md) entry         | A FAQ written as prose |
 | Build or decode a resource name            | A [name anatomy](../components/name-anatomy.md)                     | A paragraph listing the parts |
+| See figures: findings, scores, spend, emissions | A [chart](../components/charts.md), or a `kpi` tile for a single number | A screenshot of a portal dashboard |
 
 When nothing in the table fits, write a paragraph. It's always an option, and usually the best one.
 

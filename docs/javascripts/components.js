@@ -247,6 +247,8 @@
     mountValues();
     mountReviewDates();
     drawDiagrams();
+    // charts.js mounts itself on page loads; this covers the page writer.
+    if (window.docsCharts) window.docsCharts.mount();
   }
 
   // The page writer's preview draws components after the page has loaded.

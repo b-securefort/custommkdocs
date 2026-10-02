@@ -1,0 +1,725 @@
+/* ── Charts ──
+   Cards and stat tiles drawn by javascripts/charts.js from ``` chart fences.
+
+   Palette. Chart colours are separate from the theme accents because they
+   must stay apart for colour-blind readers, and were checked that way (CVD
+   and normal-vision separation of neighbouring hues) against every theme's
+   card background; keep each set's ORDER, it is part of what passes:
+     --viz-1 … --viz-8   categorical: blue, orange, aqua, yellow, magenta,
+                         green, violet, red. Identity only, never status.
+     --viz-sev-*         severity, one red from pale (low) to deep (critical),
+                         reversed on dark themes so the worst is brightest.
+     --viz-muted         the de-emphasis grey: context, "no issues", forecasts.
+   Single-series charts use the theme's --accent. Three light-mode hues fall
+   under 3:1 on white, so every chart has a legend and a table view. */
+
+:root,
+[data-theme] {
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #4a3aa7;
+  --viz-8: #e34948;
+
+  --viz-sev-low: #ef958f;
+  --viz-sev-medium: #e15a55;
+  --viz-sev-high: #c3302f;
+  --viz-sev-critical: #8a1b1e;
+
+  --viz-muted: var(--base-600);
+}
+
+[data-theme="dark"],
+[data-theme="midnight"],
+[data-theme="meadow-dark"] {
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+  --viz-7: #9085e9;
+  --viz-8: #e66767;
+
+  --viz-sev-low: #a3292b;
+  --viz-sev-medium: #c93a3a;
+  --viz-sev-high: #e5625d;
+  --viz-sev-critical: #f39a95;
+
+  --viz-muted: var(--base-500);
+}
+
+/* Before the script runs, a fence is an empty placeholder the size of a
+   chart, so the page doesn't jump when it's drawn. */
+.md-typeset pre.chart {
+  height: 19rem;
+  margin: 1.25em 0;
+  border: 1px solid var(--base-700);
+  border-radius: 16px;
+  background: var(--base-900);
+  overflow: hidden;
+}
+
+.md-typeset pre.chart > code {
+  visibility: hidden;
+}
+
+/* ── Grid: <div class="chart-grid" markdown> around several charts ── */
+.md-typeset .chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 1rem;
+  margin: 1.25em 0;
+}
+
+.md-typeset .chart-grid > .chart-card,
+.md-typeset .chart-grid > pre.chart,
+.md-typeset .chart-grid > .chart-kpis {
+  margin: 0;
+}
+
+.md-typeset .chart-grid > .chart-card--wide,
+.md-typeset .chart-grid > .chart-kpis {
+  grid-column: 1 / -1;
+}
+
+/* ── Card ── */
+.md-typeset .chart-card {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 1.25em 0;
+  padding: 0.95rem 1.05rem 0.85rem;
+  border: 1px solid var(--base-700);
+  border-radius: 16px;
+  background: var(--base-900);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  container-type: inline-size;
+  opacity: 0;
+  transform: translateY(calc(10px * var(--motion-scale)));
+  transition:
+    opacity 0.6s var(--ease-out),
+    transform 0.6s var(--ease-out),
+    border-color 0.3s,
+    box-shadow 0.3s;
+}
+
+/* A faint wash of the accent from the top corner. */
+.md-typeset .chart-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(
+    28rem 12rem at 0% 0%,
+    color-mix(in srgb, var(--accent) 6%, transparent),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.md-typeset .chart-card.is-revealed {
+  opacity: 1;
+  transform: none;
+}
+
+.md-typeset .chart-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--base-700));
+  box-shadow: var(--shadow-lg);
+}
+
+/* Fetching live figures: the last ones stay, dimmed, so nothing jumps. */
+.md-typeset .chart-card.is-loading .chart-card__body {
+  opacity: 0.55;
+  transition: opacity 0.3s;
+}
+
+.md-typeset .chart-card__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 0 0 0.6rem;
+}
+
+.md-typeset .chart-card__titles {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.md-typeset .chart-card__title {
+  color: var(--base-100);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.md-typeset .chart-card__subtitle {
+  color: var(--base-400);
+  font-size: 0.66rem;
+}
+
+.md-typeset .chart-card__figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  text-align: right;
+}
+
+.md-typeset .chart-card__figure[hidden] {
+  display: none;
+}
+
+/* On a narrow card the headline moves under the title. */
+@container (max-width: 26rem) {
+  .md-typeset .chart-card__head {
+    flex-wrap: wrap;
+  }
+
+  .md-typeset .chart-card__titles {
+    flex-basis: calc(100% - 2.5rem);
+  }
+
+  .md-typeset .chart-card__figure {
+    flex-direction: row;
+    flex-wrap: wrap;
+    order: 3;
+    align-items: center;
+    gap: 0.35rem 0.6rem;
+    text-align: left;
+  }
+}
+
+.md-typeset .chart-card__figure-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.md-typeset .chart-card__figure-value {
+  color: var(--base-100);
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.md-typeset .chart-card__figure-label {
+  color: var(--base-400);
+  font-size: 0.6rem;
+}
+
+.md-typeset .chart-card__toggle {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  margin: -0.15rem -0.3rem 0 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--base-400);
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.md-typeset .chart-card__toggle svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  fill: currentColor;
+}
+
+.md-typeset .chart-card__toggle:hover,
+.md-typeset .chart-card__toggle:focus-visible,
+.md-typeset .chart-card__toggle[aria-pressed="true"] {
+  border-color: var(--base-700);
+  background: var(--base-800);
+  color: var(--base-100);
+}
+
+.md-typeset .chart-card__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.md-typeset .chart-card__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.7rem;
+}
+
+.md-typeset .chart-card__plot {
+  position: relative;
+  min-width: 0;
+}
+
+.md-typeset .chart-card__plot canvas {
+  display: block;
+}
+
+/* Donuts put their legend beside the ring, with values, on wide cards. */
+.md-typeset .chart-card--donut .chart-card__body {
+  flex-flow: row wrap;
+  align-items: center;
+}
+
+.md-typeset .chart-card--donut .chart-card__plot {
+  flex: 1 1 12rem;
+  max-width: 16rem;
+  margin: 0 auto;
+}
+
+.md-typeset .chart-card--donut .chart-legend {
+  flex: 1 1 12rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.1rem;
+}
+
+.md-typeset .chart-card__table {
+  display: none;
+  overflow-x: auto;
+}
+
+.md-typeset .chart-card.is-table .chart-card__body {
+  display: none;
+}
+
+.md-typeset .chart-card.is-table .chart-card__table {
+  display: block;
+}
+
+.md-typeset .chart-card__table table {
+  display: table;
+  width: 100%;
+  margin: 0;
+  font-size: 0.64rem;
+}
+
+.md-typeset .chart-card__table td:not(:first-child),
+.md-typeset .chart-card__table th:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-typeset .chart-card__note {
+  margin: 0.6rem 0 0;
+  color: var(--base-500);
+  font-size: 0.6rem;
+}
+
+.md-typeset .chart-card__note[hidden] {
+  display: none;
+}
+
+/* ── Legend: toggles a series; pointing at one lights up its marks ── */
+.md-typeset .chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.35rem;
+}
+
+.md-typeset .chart-legend[hidden] {
+  display: none;
+}
+
+.md-typeset .chart-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  color: var(--base-300);
+  font-size: 0.62rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    opacity 0.2s;
+}
+
+.md-typeset .chart-legend__item:hover {
+  background: var(--base-800);
+}
+
+.md-typeset .chart-legend__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.md-typeset .chart-legend__item.is-off {
+  opacity: 0.45;
+}
+
+.md-typeset .chart-legend__item.is-off .chart-legend__name {
+  text-decoration: line-through;
+}
+
+.md-typeset .chart-legend__key {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 3px;
+  background: var(--key);
+}
+
+.md-typeset .chart-legend__item.is-off .chart-legend__key {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--key);
+}
+
+.md-typeset .chart-legend__key--line,
+.md-typeset .chart-legend__key--dash {
+  width: 0.8rem;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.md-typeset .chart-legend__key--dash {
+  background: repeating-linear-gradient(90deg, var(--key) 0 4px, transparent 4px 7px);
+}
+
+.md-typeset .chart-card--donut .chart-legend__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto 2.4em;
+  border-radius: 8px;
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}
+
+.md-typeset .chart-legend__value {
+  color: var(--base-100);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-typeset .chart-legend__share {
+  color: var(--base-500);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Tooltip: the value leads, the series follows ── */
+.md-typeset .chart-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  min-width: 8.5rem;
+  max-width: 16rem;
+  padding: 0.45rem 0.6rem 0.5rem;
+  border: 1px solid var(--base-700);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--base-900) 86%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.62rem;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.18s var(--ease-out);
+}
+
+.md-typeset .chart-tip.is-visible {
+  opacity: 1;
+}
+
+.md-typeset .chart-tip__title {
+  margin-bottom: 0.3rem;
+  color: var(--base-400);
+  font-weight: 500;
+}
+
+.md-typeset .chart-tip__row {
+  display: grid;
+  grid-template-columns: 0.8rem auto 1fr;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.08rem 0;
+}
+
+.md-typeset .chart-tip__row--total {
+  margin-top: 0.25rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--base-700);
+}
+
+.md-typeset .chart-tip__value {
+  color: var(--base-100);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-typeset .chart-tip__name {
+  overflow: hidden;
+  color: var(--base-400);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-typeset .chart-tip__key {
+  width: 0.8rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--key);
+}
+
+.md-typeset .chart-tip__key--rect {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 2px;
+}
+
+.md-typeset .chart-tip__key--dash {
+  background: repeating-linear-gradient(90deg, var(--key) 0 4px, transparent 4px 7px);
+}
+
+/* ── Delta: direction × whether that direction is good ── */
+.md-typeset .chart-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  width: fit-content;
+  padding: 0.08rem 0.45rem 0.08rem 0.2rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 11%, transparent);
+  font-size: 0.6rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.md-typeset .chart-delta svg {
+  width: 1.1em;
+  height: 1.1em;
+  fill: currentColor;
+}
+
+.md-typeset .chart-delta--good {
+  color: var(--success);
+}
+
+.md-typeset .chart-delta--bad {
+  color: var(--danger);
+}
+
+.md-typeset .chart-delta--flat {
+  padding-left: 0.45rem;
+  color: var(--base-400);
+}
+
+.md-typeset .chart-delta__label {
+  margin-left: 0.25rem;
+  color: var(--base-400);
+  font-weight: 500;
+}
+
+/* ── Stat tiles: { "type": "kpi", "tiles": [...] } ── */
+.md-typeset .chart-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr));
+  gap: 1rem;
+  margin: 1.25em 0;
+}
+
+.md-typeset .chart-kpi {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.85rem 1rem 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--base-700);
+  border-radius: 16px;
+  background: var(--base-900);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transform: translateY(calc(10px * var(--motion-scale)));
+  transition:
+    opacity 0.6s var(--ease-out),
+    transform 0.6s var(--ease-out),
+    border-color 0.3s,
+    box-shadow 0.3s;
+}
+
+.md-typeset .chart-kpi::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    14rem 8rem at 100% 100%,
+    color-mix(in srgb, var(--accent) 9%, transparent),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.md-typeset .chart-kpis.is-revealed .chart-kpi {
+  opacity: 1;
+  transform: none;
+}
+
+.md-typeset .chart-kpis.is-revealed .chart-kpi:nth-child(2) {
+  transition-delay: 0.07s;
+}
+
+.md-typeset .chart-kpis.is-revealed .chart-kpi:nth-child(3) {
+  transition-delay: 0.14s;
+}
+
+.md-typeset .chart-kpis.is-revealed .chart-kpi:nth-child(n + 4) {
+  transition-delay: 0.21s;
+}
+
+.md-typeset .chart-kpi:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--base-700));
+  box-shadow: var(--shadow-lg);
+}
+
+.md-typeset .chart-kpi__label {
+  color: var(--base-400);
+  font-size: 0.64rem;
+  font-weight: 500;
+}
+
+.md-typeset .chart-kpi__value {
+  color: var(--base-100);
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.md-typeset .chart-kpi__note {
+  color: var(--base-500);
+  font-size: 0.58rem;
+}
+
+.md-typeset .chart-kpi__trend {
+  position: relative;
+  height: 2.1rem;
+  margin: 0.25rem 0 0;
+}
+
+.md-typeset .chart-kpi__trend svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.md-typeset .chart-kpi__trend stop {
+  stop-color: var(--accent);
+  stop-opacity: 0.2;
+}
+
+.md-typeset .chart-kpi__trend stop + stop {
+  stop-opacity: 0;
+}
+
+.md-typeset .chart-kpi__line,
+.md-typeset .chart-kpi__now {
+  fill: none;
+  stroke-width: 1.75px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.md-typeset .chart-kpi__line {
+  stroke: var(--viz-muted);
+}
+
+.md-typeset .chart-kpi__now {
+  stroke: var(--accent);
+}
+
+.md-typeset .chart-kpi__dot {
+  position: absolute;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--base-900);
+  transform: translate(50%, -50%);
+}
+
+/* ── A fence the script couldn't read ── */
+.md-typeset .chart-card--error {
+  gap: 0.35rem;
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--base-700));
+  opacity: 1;
+  transform: none;
+}
+
+.md-typeset .chart-card--error strong {
+  color: var(--danger);
+}
+
+.md-typeset .chart-card--error pre {
+  max-height: 10rem;
+  margin: 0.3rem 0 0;
+  overflow: auto;
+  font-size: 0.6rem;
+}
+
+/* Print and forced colours: the figures, not the canvas. */
+@media print {
+  .md-typeset .chart-card,
+  .md-typeset .chart-kpi {
+    opacity: 1;
+    transform: none;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}
+
+@media (forced-colors: active) {
+  .md-typeset .chart-card .chart-card__body {
+    display: none;
+  }
+
+  .md-typeset .chart-card .chart-card__table {
+    display: block;
+  }
+
+  .md-typeset .chart-card__toggle {
+    display: none;
+  }
+}
+
+/* Colour chips in the docs' tables: <span class="chart-swatches"><i style="--c: …"></i></span> */
+.md-typeset .chart-swatches {
+  display: inline-flex;
+  gap: 3px;
+  vertical-align: -0.1em;
+}
+
+.md-typeset .chart-swatches i {
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 3px;
+  background: var(--c);
+}

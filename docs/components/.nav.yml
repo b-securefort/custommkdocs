@@ -16,6 +16,7 @@ nav:
       - screenshots.md
       - troubleshooting.md
       - name-anatomy.md
+      - charts.md
       - glossary.md
   - Markdown:
       - admonitions.md

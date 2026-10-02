@@ -82,6 +82,12 @@ For Azure and AWS platform documentation.
 
     Collapsed entries with the error, its cause and the fix.
 
+-   :material-chart-box-outline:{ .lg .middle } __[Charts](charts.md)__
+
+    ---
+
+    Advisor findings, security, cost and sustainability, in the theme's colours.
+
 </div>
 
 Also for cloud pages: [name anatomy](name-anatomy.md) for naming standards, [glossary tooltips](glossary.md) for abbreviations, [cloud callouts](admonitions.md#cloud-callouts) for permissions, cost, security and preview features, and [command output](code-blocks.md#command-output) blocks.
