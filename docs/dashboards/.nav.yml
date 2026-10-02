@@ -1,0 +1,8 @@
+title: Dashboards
+nav:
+  - index.md
+  - security.md
+  - advisor.md
+  - cost.md
+  - sustainability.md
+append_unmatched: true

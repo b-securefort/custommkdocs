@@ -855,6 +855,14 @@
   line-height: 1.1;
 }
 
+.md-typeset .chart-kpi__unit {
+  margin-left: 0.25em;
+  color: var(--base-400);
+  font-size: 0.5em;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
 .md-typeset .chart-kpi__note {
   color: var(--base-500);
   font-size: 0.58rem;
@@ -966,4 +974,404 @@
   height: 0.8em;
   border-radius: 3px;
   background: var(--c);
+}
+
+/* ── Empty state: a chart with no figures says so, with a check ── */
+.md-typeset .chart-card__empty {
+  display: none;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 9rem;
+  color: var(--base-300);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.md-typeset .chart-card__empty svg {
+  width: 1.9rem;
+  height: 1.9rem;
+  fill: var(--success);
+}
+
+.md-typeset .chart-card.is-empty .chart-card__empty {
+  display: flex;
+}
+
+.md-typeset .chart-card.is-empty .chart-card__body,
+.md-typeset .chart-card.is-empty .chart-card__table,
+.md-typeset .chart-card.is-empty .chart-card__toggle {
+  display: none;
+}
+
+/* ── Stat tile breakdown: { "parts": [{ "label", "value", "color" }] } ── */
+.md-typeset .chart-kpi__parts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+
+.md-typeset .chart-kpi__bar {
+  display: flex;
+  gap: 2px;
+  height: 0.4rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--base-800);
+}
+
+.md-typeset .chart-kpi__bar span {
+  min-width: 3px;
+}
+
+.md-typeset .chart-kpi__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.7rem;
+  color: var(--base-400);
+  font-size: 0.58rem;
+}
+
+.md-typeset .chart-kpi__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.md-typeset .chart-kpi__key i {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 2px;
+}
+
+.md-typeset .chart-kpi__key strong {
+  color: var(--base-100);
+  font-weight: 650;
+}
+
+.md-typeset .chart-kpi__key.is-zero {
+  opacity: 0.6;
+}
+
+/* ── Findings: grouped recommendations or alerts ── */
+.md-typeset .chart-findings__strip {
+  display: flex;
+  gap: 2px;
+  height: 0.5rem;
+  margin-bottom: 0.7rem;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.md-typeset .chart-findings__strip span {
+  min-width: 4px;
+}
+
+.md-typeset .chart-findings__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.md-typeset .chart-findings__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--base-700);
+  border-radius: 999px;
+  color: var(--base-300);
+  font-size: 0.62rem;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.md-typeset .chart-findings__chip strong {
+  color: var(--base-100);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-typeset .chart-findings__chip:hover:not(:disabled) {
+  background: var(--base-800);
+}
+
+.md-typeset .chart-findings__chip.is-on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--base-700));
+  background: color-mix(in srgb, var(--accent) 10%, var(--base-900));
+  color: var(--base-100);
+}
+
+.md-typeset .chart-findings__chip:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.md-typeset .chart-findings__chip:focus-visible,
+.md-typeset .chart-findings__row:focus-visible,
+.md-typeset .chart-findings__more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.md-typeset .chart-findings__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+.md-typeset ul.chart-findings__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset ul.chart-findings__list > li.chart-findings__item {
+  margin: 0;
+  border-top: 1px solid var(--base-800);
+  transition:
+    opacity 0.4s var(--ease-out),
+    transform 0.4s var(--ease-out);
+}
+
+.md-typeset .chart-findings__row {
+  display: grid;
+  grid-template-columns: 5rem 1fr auto auto;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.6rem 0.2rem;
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.chart-findings__row {
+  cursor: pointer;
+}
+
+.md-typeset button.chart-findings__row:hover {
+  background: var(--base-800);
+}
+
+.md-typeset div.chart-findings__row {
+  grid-template-columns: 5rem 1fr auto;
+}
+
+/* No severity column: tags ride in the meta line instead. */
+.md-typeset .chart-findings__row.chart-findings__row--plain {
+  grid-template-columns: 1fr auto auto;
+}
+
+.md-typeset div.chart-findings__row.chart-findings__row--plain {
+  grid-template-columns: 1fr auto;
+}
+
+.md-typeset .chart-findings__meta .chart-findings__tag {
+  display: inline-block;
+  margin-right: 0.45rem;
+  padding: 0.02rem 0.35rem;
+  font-size: 0.52rem;
+}
+
+.md-typeset .chart-findings__row--plain + .chart-findings__detail {
+  padding-left: 0.2rem;
+}
+
+/* Severity: a label tinted with its colour, never colour alone. */
+.md-typeset .chart-findings__sev,
+.md-typeset .chart-findings__tag {
+  justify-self: start;
+  padding: 0.12rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.md-typeset .chart-findings__sev {
+  border: 1px solid color-mix(in srgb, var(--sev) 55%, transparent);
+  background: color-mix(in srgb, var(--sev) 16%, transparent);
+  color: var(--base-100);
+}
+
+.md-typeset .chart-findings__sev::before {
+  content: "";
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin-right: 0.3rem;
+  border-radius: 50%;
+  background: var(--sev);
+  vertical-align: 0.05em;
+}
+
+.md-typeset .chart-findings__tag {
+  border: 1px solid var(--base-700);
+  color: var(--base-300);
+}
+
+.md-typeset .chart-findings__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.md-typeset .chart-findings__title {
+  color: var(--base-100);
+  font-size: 0.68rem;
+  font-weight: 550;
+  line-height: 1.35;
+}
+
+.md-typeset .chart-findings__meta {
+  color: var(--base-500);
+  font-size: 0.6rem;
+}
+
+.md-typeset .chart-findings__figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--base-100);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.md-typeset .chart-findings__figure span {
+  color: var(--base-500);
+  font-size: 0.56rem;
+}
+
+.md-typeset .chart-findings__chevron svg {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  fill: var(--base-500);
+  transition: transform 0.25s var(--ease-out);
+}
+
+.md-typeset .chart-findings__item.is-open .chart-findings__chevron svg {
+  transform: rotate(90deg);
+}
+
+.md-typeset .chart-findings__detail {
+  padding: 0 0.2rem 0.75rem calc(5rem + 0.9rem);
+  color: var(--base-300);
+  font-size: 0.64rem;
+}
+
+.md-typeset .chart-findings__detail p {
+  margin: 0 0 0.45rem;
+}
+
+.md-typeset ul.chart-findings__resources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0 0 0.45rem;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset ul.chart-findings__resources > li {
+  margin: 0;
+  padding: 0.1rem 0.45rem;
+  border-radius: 6px;
+  background: var(--base-800);
+  font-family: var(--md-code-font-family);
+  font-size: 0.58rem;
+}
+
+.md-typeset .chart-findings__link {
+  font-weight: 600;
+}
+
+.md-typeset .chart-findings__more {
+  margin-top: 0.4rem;
+  padding: 0.3rem 0.2rem;
+  color: var(--accent-light);
+  font-size: 0.64rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.md-typeset .chart-card__plot--html:not(.is-drawn) .chart-findings__item {
+  opacity: 0;
+  transform: translateY(calc(6px * var(--motion-scale)));
+}
+
+.md-typeset .chart-card__plot--html.is-drawn .chart-findings__item {
+  transition-delay: calc(var(--i, 0) * 45ms);
+}
+
+@container (max-width: 26rem) {
+  .md-typeset .chart-findings__row,
+  .md-typeset div.chart-findings__row {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .md-typeset .chart-findings__sev,
+  .md-typeset .chart-findings__tag {
+    grid-column: 1 / -1;
+  }
+
+  .md-typeset .chart-findings__detail {
+    padding-left: 0.2rem;
+  }
+}
+
+/* ── Context strip: which account the figures are for, and how fresh ──
+   <div class="chart-context" markdown> around a list of "**Label** value". */
+.md-typeset .chart-context > ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.8rem;
+  margin: 1em 0 1.25em;
+  padding: 0.75rem 1.05rem;
+  border: 1px solid var(--base-700);
+  border-radius: 14px;
+  background: var(--base-950);
+  list-style: none;
+}
+
+.md-typeset .chart-context > ul > li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  color: var(--base-100);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.md-typeset .chart-context > ul > li > strong:first-child {
+  color: var(--base-500);
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.md-typeset .chart-context code {
+  padding: 0;
+  background: none;
+  font-size: 0.64rem;
+}
+
+/* A list starts at the top of its card, however tall the row makes it. */
+.md-typeset .chart-card--findings .chart-card__body,
+.md-typeset .chart-card--progress .chart-card__body {
+  justify-content: flex-start;
 }

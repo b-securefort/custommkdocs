@@ -18,10 +18,12 @@
  *   heatmap    a grid of values, darker where higher
  *   progress   a list of meters against their targets
  *   treemap    shares of a total as nested rectangles
+ *   findings   recommendations or alerts, grouped, with severity filters
  *
  * The first seven are drawn by Chart.js (vendor/chart.umd.min.js, copied
  * there by tools/chartjs/), which loads only on pages with one of them; the
- * last three are plain HTML. Each chart is drawn when it first scrolls into
+ * last four are plain HTML. A chart with no figures shows its "empty"
+ * message instead, such as "No recommendations". Each chart is drawn when it first scrolls into
  * view.
  *
  * Colours come from charts.css: an eight-hue categorical palette and a
@@ -30,7 +32,8 @@
  * motion level redraws every chart in place.
  *
  * Live data: a chart with an "id" takes new figures from
- *   window.docsCharts.set("<id>", { labels: [...], series: [...] })
+ *   window.docsCharts.set("<id>", { labels: [...], series: [...] }),
+ * code can draw one anywhere with docsCharts.render(element, json),
  * and a chart with "src" fetches that JSON (the same fields) on load; the
  * figures in the page show until it arrives.
  *
@@ -42,7 +45,9 @@
   var BASE = SCRIPT ? SCRIPT.replace(/javascripts\/charts\.js(?:[?#].*)?$/, "") : "/";
   var CHART_SRC = BASE + "javascripts/vendor/chart.umd.min.js";
   var CHARTJS_TYPES = ["bar", "line", "donut", "gauge", "radar", "waterfall", "scatter"];
-  var HTML_TYPES = ["heatmap", "progress", "treemap"];
+  var HTML_TYPES = ["heatmap", "progress", "treemap", "findings"];
+  // Most severe first; Defender's "informational" sorts after low.
+  var SEVERITY_ORDER = ["critical", "high", "medium", "low", "informational"];
   var TYPES = ["kpi"].concat(CHARTJS_TYPES, HTML_TYPES);
   var SEVERITY = ["low", "medium", "high", "critical"];
 
@@ -50,6 +55,10 @@
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2m0 4v4h6V8zm8 0v4h6V8zm-8 6v4h6v-4zm8 0v4h6v-4z"/></svg>';
   var ICON_CHART =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 21H2V3h2v16h2v-9h4v9h2V6h4v13h2v-5h4z"/></svg>';
+  var ICON_CHECK =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20m-1.5 13.6 6.4-6.4-1.4-1.4-5 5-2.3-2.3-1.4 1.4z"/></svg>';
+  var ICON_CHEVRON =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 16.6 13.2 12 8.6 7.4 10 6l6 6-6 6z"/></svg>';
   var ICON_UP =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 15l5-5 5 5z"/></svg>';
   var ICON_DOWN =
@@ -173,6 +182,18 @@
     return index < 8 ? theme.series[index] : theme.muted;
   }
 
+  /** The same names as colorFor, as a CSS value that follows the theme. */
+  function cssColor(name, index) {
+    var key = name == null ? "" : String(name).toLowerCase();
+    if (/^[1-8]$/.test(key)) return "var(--viz-" + key + ")";
+    if (SEVERITY.indexOf(key) >= 0) return "var(--viz-sev-" + key + ")";
+    if (key === "accent") return "var(--accent)";
+    if (key === "muted" || key === "informational") return "var(--viz-muted)";
+    if (key === "good") return "var(--success)";
+    if (rgb(key)) return key;
+    return index < 8 ? "var(--viz-" + (index + 1) + ")" : "var(--viz-muted)";
+  }
+
   /** The fill for a value, by the first band it falls in (gauge, progress). */
   function bandColor(spec, value, fallback, theme) {
     var bands = Array.isArray(spec.bands) ? spec.bands : [];
@@ -254,8 +275,8 @@
   }
 
   /** Counts a figure up from zero when it's revealed, at full motion. */
-  function countUp(node, value, fmt, compact) {
-    var final = fmt(value, compact);
+  function countUp(node, value, fmt, compact, withUnit) {
+    var final = fmt(value, compact, withUnit);
     if (motionLevel(node) !== "full" || typeof value !== "number") {
       node.textContent = final;
       return;
@@ -265,7 +286,7 @@
     (function frame(now) {
       var t = Math.min(1, (now - start) / duration);
       var eased = 1 - Math.pow(1 - t, 4);
-      node.textContent = t < 1 ? fmt(value * eased, compact) : final;
+      node.textContent = t < 1 ? fmt(value * eased, compact, withUnit) : final;
       if (t < 1 && node.isConnected) requestAnimationFrame(frame);
     })(start);
   }
@@ -475,7 +496,9 @@
           total += value;
           if (opts.stacked || bars.length === 1) tip = chart.getDatasetMeta(d).data[index];
         });
-        if (!tip || (opts.stacked && !total)) return;
+        // A stack that adds up to nothing still says 0: "no recommendations"
+        // is worth showing.
+        if (!tip) return;
         var pos = tip.getProps(["x", "y", "base"], false);
         var negative = horizontal ? pos.x < pos.base : pos.y > pos.base;
         var shown = opts.signed ? signed(opts.format, total, true) : opts.format(total, true, false);
@@ -785,8 +808,9 @@
       borderDash: s.dashed ? [5, 5] : [],
       borderCapStyle: "round",
       borderJoinStyle: "round",
+      // Monotone curves never overshoot a point; "smooth": false draws straight lines.
       tension: spec.smooth === false ? 0 : 0.35,
-      cubicInterpolationMode: "monotone",
+      cubicInterpolationMode: spec.smooth === false ? "default" : "monotone",
       spanGaps: true,
       fill: stacked ? (i === 0 ? "origin" : "-1") : area ? "origin" : false,
       // Stacked layers are flat washes; a lone area fades to the baseline.
@@ -1526,7 +1550,231 @@
     }
   }
 
-  var RENDERERS = { heatmap: renderHeatmap, progress: renderProgress, treemap: renderTreemap };
+  // Other scales in the same places: Trusted Advisor's error and warning,
+  // and the APIs' upper-case names.
+  var SEVERITY_ALIASES = { info: "informational", error: "high", warning: "medium" };
+
+  function severityKey(value) {
+    var key = String(value || "").toLowerCase();
+    return SEVERITY_ALIASES[key] || key;
+  }
+
+  /** "high" shows as "High", or as the chart's own name for it, such as
+   *  "Error": { "severityNames": { "high": "Error", "medium": "Warning" } }. */
+  function severityName(key, spec) {
+    var names = (spec && spec.severityNames) || {};
+    if (names[key]) return names[key];
+    return key ? key.charAt(0).toUpperCase() + key.slice(1) : "";
+  }
+
+  function severityRank(key) {
+    var i = SEVERITY_ORDER.indexOf(key);
+    return i < 0 ? SEVERITY_ORDER.length : i;
+  }
+
+  /** One row per finding: rows with the same title and severity (one per
+   *  resource, as the APIs return them) become one, with a resource count. */
+  function groupFindings(spec) {
+    var rows = [];
+    var seen = {};
+    (spec.items || []).forEach(function (item) {
+      var severity = severityKey(item.severity);
+      var names = Array.isArray(item.resources) ? item.resources.slice() : null;
+      var count = names ? names.length : item.resources != null ? Number(item.resources) || 0 : 1;
+      var key = severity + "\u0000" + item.title;
+      var row = spec.group !== false && seen[key];
+      if (row) {
+        row.count += count;
+        if (names) row.names = (row.names || []).concat(names);
+        if (item.value != null) row.value = (row.value || 0) + Number(item.value);
+        return;
+      }
+      row = {
+        severity: severity,
+        title: item.title,
+        detail: item.detail,
+        resourceType: item.resourceType,
+        status: item.status,
+        tag: item.tag,
+        link: item.link,
+        value: item.value != null ? Number(item.value) : null,
+        count: count,
+        names: names,
+      };
+      seen[key] = row;
+      rows.push(row);
+    });
+    if (spec.sort !== false) {
+      rows.sort(function (a, b) {
+        return severityRank(a.severity) - severityRank(b.severity) || (b.value || 0) - (a.value || 0) || b.count - a.count;
+      });
+    }
+    return rows;
+  }
+
+  function hasCounts(spec) {
+    return (spec.items || []).some(function (item) {
+      return item.resources != null;
+    });
+  }
+
+  function findingLevels(spec, rows) {
+    if (Array.isArray(spec.severities)) return spec.severities.map(severityKey);
+    // High, medium and low always show, so a zero is visible; the rest when used.
+    return SEVERITY_ORDER.filter(function (level) {
+      return ["high", "medium", "low"].indexOf(level) >= 0 || rows.some(function (r) {
+        return r.severity === level;
+      });
+    });
+  }
+
+  function renderFindings(entry) {
+    var spec = entry.spec;
+    var rows = groupFindings(spec);
+    var counts = hasCounts(spec);
+    var rated = rows.some(function (r) {
+      return r.severity;
+    });
+    var filter = entry.filter || "all";
+    var root = el("div", "chart-findings");
+
+    if (rated) {
+      var levels = findingLevels(spec, rows);
+      var totals = {};
+      var all = 0;
+      // Count resources (one API row each) unless "countBy": "rows" asks for
+      // one per recommendation.
+      rows.forEach(function (r) {
+        var n = spec.countBy === "rows" ? 1 : r.count;
+        totals[r.severity] = (totals[r.severity] || 0) + n;
+        all += n;
+      });
+      // The share of each severity as one bar, and a filter per severity,
+      // zeros included: "0 critical" is worth knowing.
+      var strip = el("div", "chart-findings__strip", { "aria-hidden": "true" });
+      levels.forEach(function (level) {
+        if (!totals[level]) return;
+        var part = el("span");
+        part.style.flexGrow = totals[level];
+        part.style.background = cssColor(level);
+        strip.appendChild(part);
+      });
+      root.appendChild(strip);
+      var chips = el("div", "chart-findings__chips", { role: "group", "aria-label": "Show by severity" });
+      [["all", "All", all]].concat(levels.map(function (level) {
+        return [level, severityName(level, spec), totals[level] || 0];
+      })).forEach(function (chip) {
+        var on = filter === chip[0];
+        var button = el("button", "chart-findings__chip" + (on ? " is-on" : ""), { type: "button", "aria-pressed": on ? "true" : "false" });
+        if (chip[0] !== "all") {
+          var dot = el("span", "chart-findings__dot");
+          dot.style.background = cssColor(chip[0]);
+          button.appendChild(dot);
+        }
+        button.appendChild(text("span", null, chip[1]));
+        button.appendChild(text("strong", null, chip[2]));
+        if (chip[0] !== "all" && !chip[2]) button.disabled = true;
+        button.addEventListener("click", function () {
+          entry.filter = chip[0];
+          entry.expanded = false;
+          renderHtml(entry);
+        });
+        chips.appendChild(button);
+      });
+      root.appendChild(chips);
+    }
+
+    var shown = rows.filter(function (r) {
+      return filter === "all" || r.severity === filter;
+    });
+    var limit = spec.limit || 6;
+    var visible = entry.expanded ? shown : shown.slice(0, limit);
+    var list = el("ul", "chart-findings__list");
+    visible.forEach(function (r, i) {
+      var item = el("li", "chart-findings__item");
+      item.style.setProperty("--i", i);
+      var extra = r.detail || (r.names && r.names.length) || r.link;
+      var head = el(extra ? "button" : "div", "chart-findings__row");
+      if (extra) {
+        head.type = "button";
+        head.setAttribute("aria-expanded", "false");
+      }
+      if (r.severity) {
+        var pill = text("span", "chart-findings__sev", severityName(r.severity, spec));
+        pill.style.setProperty("--sev", cssColor(r.severity));
+        head.appendChild(pill);
+      } else {
+        head.classList.add("chart-findings__row--plain");
+      }
+      var body = el("span", "chart-findings__body");
+      body.appendChild(text("span", "chart-findings__title", r.title));
+      var meta = [
+        r.resourceType,
+        counts ? r.count + (r.count === 1 ? " resource" : " resources") : null,
+        r.status,
+        r.severity ? r.tag : null,
+      ].filter(Boolean).join(" · ");
+      if (meta || (!r.severity && r.tag)) {
+        var line = text("span", "chart-findings__meta", meta);
+        if (!r.severity && r.tag) line.insertBefore(text("span", "chart-findings__tag", r.tag), line.firstChild);
+        body.appendChild(line);
+      }
+      head.appendChild(body);
+      var figure = r.value != null ? entry.fmt(r.value, false) : counts ? String(r.count) : "";
+      if (figure) {
+        var fig = el("span", "chart-findings__figure");
+        fig.appendChild(text("strong", null, figure));
+        if (r.value != null && spec.valueLabel) fig.appendChild(text("span", null, spec.valueLabel));
+        head.appendChild(fig);
+      }
+      if (extra) {
+        var chevron = el("span", "chart-findings__chevron");
+        chevron.innerHTML = ICON_CHEVRON;
+        head.appendChild(chevron);
+      }
+      item.appendChild(head);
+      if (extra) {
+        var panel = el("div", "chart-findings__detail");
+        panel.hidden = true;
+        if (r.detail) panel.appendChild(text("p", null, r.detail));
+        if (r.names && r.names.length) {
+          var names = el("ul", "chart-findings__resources");
+          r.names.forEach(function (name) {
+            names.appendChild(text("li", null, name));
+          });
+          panel.appendChild(names);
+        }
+        if (r.link) {
+          var link = text("a", "chart-findings__link", spec.linkText || "Open in the portal");
+          link.href = r.link;
+          link.target = "_blank";
+          link.rel = "noopener";
+          panel.appendChild(link);
+        }
+        item.appendChild(panel);
+        head.addEventListener("click", function () {
+          var open = panel.hidden;
+          panel.hidden = !open;
+          head.setAttribute("aria-expanded", open ? "true" : "false");
+          item.classList.toggle("is-open", open);
+        });
+      }
+      list.appendChild(item);
+    });
+    root.appendChild(list);
+    if (shown.length > limit) {
+      var more = text("button", "chart-findings__more", entry.expanded ? "Show fewer" : "Show all " + shown.length);
+      more.type = "button";
+      more.addEventListener("click", function () {
+        entry.expanded = !entry.expanded;
+        renderHtml(entry);
+      });
+      root.appendChild(more);
+    }
+    entry.plot.appendChild(root);
+  }
+
+  var RENDERERS = { heatmap: renderHeatmap, progress: renderProgress, treemap: renderTreemap, findings: renderFindings };
 
   function renderHtml(entry) {
     if (!entry.card.isConnected) return;
@@ -1720,6 +1968,23 @@
             return [it.label, fmt(num(it.value)) + (spec.format === "percent" ? "" : " of " + fmt(top)), target == null ? "–" : fmt(target)];
           }),
         };
+      case "findings":
+        var counted = hasCounts(spec);
+        return {
+          head: ["Severity", spec.itemLabel || "Finding", "Resource type"].concat(counted ? ["Resources"] : [], (spec.items || []).some(function (it) {
+            return it.value != null;
+          }) ? [spec.valueLabel || "Value"] : [], ["Status"]),
+          rows: groupFindings(spec).map(function (r) {
+            var hasValue = (spec.items || []).some(function (it) {
+              return it.value != null;
+            });
+            return [severityName(r.severity, spec) || r.tag || "–", r.title, r.resourceType || "–"].concat(
+              counted ? [String(r.count)] : [],
+              hasValue ? [r.value == null ? "–" : fmt(r.value)] : [],
+              [r.status || "–"]
+            );
+          }),
+        };
       case "treemap":
         var items = itemsOf(spec);
         var total = sum(items.map(function (it) {
@@ -1778,7 +2043,7 @@
   function plotHeight(spec) {
     if (spec.height) return Number(spec.height);
     if (spec.type === "bar" && spec.horizontal) return Math.max(160, (spec.labels || []).length * 38 + 24);
-    if (spec.type === "heatmap" || spec.type === "progress") return null;
+    if (spec.type === "heatmap" || spec.type === "progress" || spec.type === "findings") return null;
     return { donut: 230, gauge: 200, radar: 300, scatter: 320, treemap: 300, waterfall: 290 }[spec.type] || 270;
   }
 
@@ -1835,6 +2100,10 @@
     card.appendChild(body);
     entry.table = el("div", "chart-card__table");
     card.appendChild(entry.table);
+    entry.emptyEl = el("div", "chart-card__empty");
+    entry.emptyEl.innerHTML = ICON_CHECK;
+    entry.emptyEl.appendChild(text("span", null, spec.empty || "Nothing to report"));
+    card.appendChild(entry.emptyEl);
     entry.note = text("p", "chart-card__note", spec.note || "");
     entry.note.hidden = !spec.note;
     card.appendChild(entry.note);
@@ -1877,6 +2146,33 @@
     return wrap;
   }
 
+  /** A tile's breakdown: one bar split by part, and every part's count
+   *  under it, zeros included. */
+  function partsNode(parts, fmt) {
+    var wrap = el("div", "chart-kpi__parts");
+    var bar = el("div", "chart-kpi__bar", { "aria-hidden": "true" });
+    parts.forEach(function (part, i) {
+      if (!num(part.value)) return;
+      var piece = el("span");
+      piece.style.flexGrow = num(part.value);
+      piece.style.background = cssColor(part.color, i);
+      bar.appendChild(piece);
+    });
+    wrap.appendChild(bar);
+    var keys = el("div", "chart-kpi__keys");
+    parts.forEach(function (part, i) {
+      var key = el("span", "chart-kpi__key" + (num(part.value) ? "" : " is-zero"));
+      var dot = el("i");
+      dot.style.background = cssColor(part.color, i);
+      key.appendChild(dot);
+      key.appendChild(text("strong", null, fmt(num(part.value) || 0, true, false)));
+      key.appendChild(text("span", null, part.label));
+      keys.appendChild(key);
+    });
+    wrap.appendChild(keys);
+    return wrap;
+  }
+
   function renderKpis(entry) {
     var spec = entry.spec;
     var box = entry.card;
@@ -1890,16 +2186,21 @@
       });
       var node = el("div", "chart-kpi");
       node.appendChild(text("span", "chart-kpi__label", tile.label));
-      var value = text("span", "chart-kpi__value", fmt(num(tile.value), true));
-      node.appendChild(value);
+      var figure = el("span", "chart-kpi__value");
+      var value = text("span", null, fmt(num(tile.value), true, false));
+      figure.appendChild(value);
+      var unit = tile.unit != null ? tile.unit : spec.unit;
+      if (unit) figure.appendChild(text("span", "chart-kpi__unit", unit));
+      node.appendChild(figure);
       if (tile.delta != null) node.appendChild(deltaNode(tile, fmt));
+      if (Array.isArray(tile.parts)) node.appendChild(partsNode(tile.parts, fmt));
       if (Array.isArray(tile.trend)) {
         var spark = sparkline(tile.trend);
         if (spark) node.appendChild(spark);
       }
       if (tile.note) node.appendChild(text("span", "chart-kpi__note", tile.note));
       box.appendChild(node);
-      if (entry.revealed) countUp(value, num(tile.value), fmt, true);
+      if (entry.revealed) countUp(value, num(tile.value), fmt, true, false);
     });
   }
 
@@ -1942,8 +2243,49 @@
       return;
     }
     renderHeadline(entry);
+    redraw(entry);
+  }
+
+  /** No figures at all: nothing to draw, so the card says so. */
+  function isEmpty(spec) {
+    function some(values) {
+      return (values || []).some(function (v) {
+        return num(v);
+      });
+    }
+    switch (spec.type) {
+      case "gauge":
+        return false;
+      case "heatmap":
+        return !(spec.data || []).some(some);
+      case "progress":
+      case "treemap":
+        return !itemsOf(spec).length;
+      case "findings":
+        return !(spec.items || []).length;
+      case "scatter":
+        return !seriesOf(spec).some(function (s) {
+          return (s.data || []).length;
+        });
+      default:
+        return !seriesOf(spec).some(function (s) {
+          return some(s.data);
+        });
+    }
+  }
+
+  /** Draw in the current theme and figures, once the chart has been revealed. */
+  function redraw(entry, mode) {
+    if (!entry.revealed) return;
+    var empty = isEmpty(entry.spec);
+    entry.card.classList.toggle("is-empty", empty);
+    if (empty) return;
     if (HTML_TYPES.indexOf(entry.spec.type) >= 0) {
       renderHtml(entry);
+      return;
+    }
+    if (entry.chart) {
+      draw(entry, mode);
       return;
     }
     loadChartJs().then(
@@ -1956,12 +2298,6 @@
         entry.note.textContent = "The chart couldn't load, so here are its figures.";
       }
     );
-  }
-
-  /** Redraw in the current theme and figures, if it has been drawn. */
-  function redraw(entry, mode) {
-    if (entry.chart) draw(entry, mode);
-    else if (entry.revealed && HTML_TYPES.indexOf(entry.spec.type) >= 0) renderHtml(entry);
   }
 
   /** New figures for one chart: kept for later if it hasn't been drawn. */
@@ -2065,12 +2401,27 @@
   // A new theme or motion level redraws every chart in its new colours.
   new MutationObserver(function () {
     entries.forEach(function (entry) {
-      redraw(entry, "none");
+      if (entry.spec.type !== "kpi") redraw(entry, "none");
     });
   }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-motion"] });
 
   window.docsCharts = {
     mount: mount,
+    /** Draw a chart from your own code, into an element or a selector:
+     *    docsCharts.render("#recommendations", { "type": "findings", ... })
+     *  The same JSON as a ``` chart block. Drawing into the same element
+     *  again replaces what's there. Returns the chart's card. */
+    render: function (target, spec) {
+      var box = typeof target === "string" ? document.querySelector(target) : target;
+      if (!box) throw new Error("docsCharts.render: no element matches " + target);
+      var holder = el("pre", "chart");
+      holder.appendChild(text("code", null, JSON.stringify(spec)));
+      box.textContent = "";
+      box.appendChild(holder);
+      cleanup();
+      prepare(holder);
+      return box.firstChild;
+    },
     /** Replace a chart's figures, by the "id" in its JSON. Returns how many
      *  charts on the page have that id. */
     set: function (id, patch) {

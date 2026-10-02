@@ -12,7 +12,11 @@ The figures here are examples, not real data.
 
 ## Stat tiles
 
-The few numbers a page leads with. Each tile has a value, and optionally a change against an earlier period and a `trend` of past values drawn as a sparkline.
+The few numbers a page leads with. Each tile has a value, and optionally a change against an earlier period, and under it either a trend or a breakdown.
+
+### With a trend
+
+`trend` is a list of past values, drawn as a small line that ends at the latest.
 
 === "Preview"
 
@@ -55,6 +59,60 @@ The few numbers a page leads with. Each tile has a value, and optionally a chang
     ````
 
 `good` says which way is better: `up` (the default), `down`, or `neither` for a change that's just a change. `deltaUnit` gives the change its own unit, such as `%` or ` pts`; without one, the change takes the tile's `format`.
+
+### With a breakdown
+
+`parts` splits the number into its pieces, as one bar with each piece's count under it. Zeros stay in the list, so "0 medium" reads as clearly as "50 high". A tile can also have a `note`.
+
+=== "Preview"
+
+    ``` chart
+    {
+      "type": "kpi",
+      "tiles": [
+        { "label": "Unhealthy recommendations", "value": 50,
+          "parts": [
+            { "label": "High", "value": 50, "color": "high" },
+            { "label": "Medium", "value": 0, "color": "medium" },
+            { "label": "Low", "value": 0, "color": "low" }
+          ] },
+        { "label": "Open recommendations", "value": 9,
+          "parts": [
+            { "label": "High", "value": 2, "color": "high" },
+            { "label": "Medium", "value": 5, "color": "medium" },
+            { "label": "Low", "value": 2, "color": "low" }
+          ] },
+        { "label": "Secure score", "value": 30, "format": "percent",
+          "note": "10 of 33 points" }
+      ]
+    }
+    ```
+
+=== "Markdown"
+
+    ```` markdown
+    ``` chart
+    {
+      "type": "kpi",
+      "tiles": [
+        { "label": "Unhealthy recommendations", "value": 50,
+          "parts": [
+            { "label": "High", "value": 50, "color": "high" },
+            { "label": "Medium", "value": 0, "color": "medium" },
+            { "label": "Low", "value": 0, "color": "low" }
+          ] },
+        { "label": "Open recommendations", "value": 9,
+          "parts": [
+            { "label": "High", "value": 2, "color": "high" },
+            { "label": "Medium", "value": 5, "color": "medium" },
+            { "label": "Low", "value": 2, "color": "low" }
+          ] },
+        { "label": "Secure score", "value": 30, "format": "percent",
+          "note": "10 of 33 points" }
+      ]
+    }
+    ```
+    ````
 
 ## Bar charts
 
@@ -795,3 +853,93 @@ Shares of a total as rectangles, for when there are too many parts for a donut. 
     ````
 
 Groups take the chart palette in the order they first appear. To fix a group's colour, use `groupColors`, such as `{ "Production": "1" }`.
+
+## Findings
+
+Recommendations, alerts or opportunities as a list, worst first. Rows with the same `title` and `severity` become one, with their resources added up, so you can pass the API's rows as they come: one per resource. A bar and filters at the top show each severity's count, zeros included. Rows with a `detail`, a list of `resources` or a `link` open to show them.
+
+=== "Preview"
+
+    ``` chart
+    {
+      "type": "findings",
+      "title": "Unhealthy recommendations",
+      "subtitle": "Microsoft Defender for Cloud",
+      "limit": 4,
+      "items": [
+        { "severity": "high", "title": "Windows servers should be configured to use secure communication protocols",
+          "resourceType": "Arc-enabled servers", "status": "Active",
+          "detail": "TLS 1.0 and 1.1 are still enabled. Set the minimum protocol to TLS 1.2.",
+          "resources": ["arc-win-prd-01", "arc-win-prd-02", "arc-win-prd-03"] },
+        { "severity": "high", "title": "Machines should have vulnerability findings resolved",
+          "resourceType": "Arc-enabled servers", "status": "Active", "resources": 9 },
+        { "severity": "medium", "title": "Resource logs in Key Vault should be enabled",
+          "resourceType": "Key vaults", "status": "Active", "resources": 2 },
+        { "severity": "medium", "title": "Azure Key Vault should use private link",
+          "resourceType": "Key vaults", "status": "Active", "resources": 2 },
+        { "severity": "low", "title": "Subnets should be associated with a network security group",
+          "resourceType": "Virtual networks", "status": "Active", "resources": 1 }
+      ]
+    }
+    ```
+
+=== "Markdown"
+
+    ```` markdown
+    ``` chart
+    {
+      "type": "findings",
+      "title": "Unhealthy recommendations",
+      "subtitle": "Microsoft Defender for Cloud",
+      "limit": 4,
+      "items": [
+        { "severity": "high", "title": "Windows servers should be configured to use secure communication protocols",
+          "resourceType": "Arc-enabled servers", "status": "Active",
+          "detail": "TLS 1.0 and 1.1 are still enabled. Set the minimum protocol to TLS 1.2.",
+          "resources": ["arc-win-prd-01", "arc-win-prd-02", "arc-win-prd-03"] },
+        { "severity": "high", "title": "Machines should have vulnerability findings resolved",
+          "resourceType": "Arc-enabled servers", "status": "Active", "resources": 9 },
+        { "severity": "medium", "title": "Resource logs in Key Vault should be enabled",
+          "resourceType": "Key vaults", "status": "Active", "resources": 2 },
+        { "severity": "medium", "title": "Azure Key Vault should use private link",
+          "resourceType": "Key vaults", "status": "Active", "resources": 2 },
+        { "severity": "low", "title": "Subnets should be associated with a network security group",
+          "resourceType": "Virtual networks", "status": "Active", "resources": 1 }
+      ]
+    }
+    ```
+    ````
+
+Each item takes a `severity` (`critical`, `high`, `medium`, `low` or `informational`), a `title`, and optionally `detail`, `resourceType`, `resources` (a count, or a list of names), `status`, `tag` and `link`. Without severities, as for savings opportunities, give items a `tag` and a `value` instead, and the chart's `valueLabel` says what the value is: see the [Cost dashboard](../dashboards/cost.md). `limit` is how many rows show before "Show all" (6 by default). The counts at the top add up resources; `"countBy": "rows"` counts one per recommendation instead.
+
+## When there's nothing to show
+
+A chart with no figures shows a green check and its `empty` message instead of an empty plot. No recommendations is a result worth showing.
+
+=== "Preview"
+
+    ``` chart
+    {
+      "type": "findings",
+      "title": "Cost recommendations",
+      "subtitle": "Azure Advisor",
+      "items": [],
+      "empty": "No cost recommendations"
+    }
+    ```
+
+=== "Markdown"
+
+    ```` markdown
+    ``` chart
+    {
+      "type": "findings",
+      "title": "Cost recommendations",
+      "subtitle": "Azure Advisor",
+      "items": [],
+      "empty": "No cost recommendations"
+    }
+    ```
+    ````
+
+This works for every type: a bar or line chart whose values are all zero or missing, or a list with no items. When figures arrive through [live figures](charts.md#live-figures), the chart replaces the message.

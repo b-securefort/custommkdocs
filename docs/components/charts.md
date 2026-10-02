@@ -8,7 +8,7 @@ hide:
 
 Charts for Advisor findings, security posture, cost and sustainability. Each one is a few lines of JSON in the page, drawn in the active theme's colours and redrawn when you switch theme. Point at a chart for its figures, click a legend entry to hide a series, and use the :material-table: button for the figures as a table.
 
-Every type of chart, with the Markdown that draws it, is on [Chart types](chart-types.md). The figures on this page are examples, not real data.
+Every type of chart, with the Markdown that draws it, is on [Chart types](chart-types.md), and whole dashboards built from them are under [Dashboards](../dashboards/index.md). The figures on this page are examples, not real data.
 
 ``` chart
 {
@@ -427,6 +427,7 @@ To put charts side by side, wrap them in `<div class="chart-grid" markdown>` …
 | [`heatmap`](chart-types.md#heatmap) | A grid of values: findings by subscription and area |
 | [`progress`](chart-types.md#progress) | Meters against targets: compliance per standard |
 | [`treemap`](chart-types.md#treemap) | Shares of a total with too many parts for a donut |
+| [`findings`](chart-types.md#findings) | Recommendations, alerts or savings opportunities, grouped and worst first |
 
 A single number is a `kpi` tile, not a chart with one bar.
 
@@ -446,6 +447,7 @@ A single number is a `kpi` tile, not a chart with one bar.
 | `min`, `max` | Fix the value axis, or a radar's scale |
 | `height` | The plot's height in pixels |
 | `note` | A line under the chart: the source, and when the figures are from |
+| `empty` | What the card says when there are no figures, such as "No cost recommendations" |
 | `id`, `src` | For [live figures](#live-figures) |
 
 Options for one type only, such as `percent` for bars or `region` for a scatter chart, are with that type on [Chart types](chart-types.md).
@@ -481,3 +483,14 @@ window.docsCharts.set("advisor-by-category", {
 ```
 
 `window.docsCharts.get("<id>")` returns a chart's current JSON.
+
+To draw a chart that isn't in the page at all, such as on a dashboard whose figures come from an API, pass the element (or a CSS selector) and the same JSON to `window.docsCharts.render`:
+
+``` js
+const data = await fetch("/api/security/recommendations").then((r) => r.json());
+window.docsCharts.render("#recommendations", {
+  type: "findings",
+  title: "Unhealthy recommendations",
+  items: data.map((r) => ({ severity: r.severity, title: r.name, resources: [r.resource] })),
+});
+```
